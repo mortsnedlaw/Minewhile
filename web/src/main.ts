@@ -1,9 +1,6 @@
 import "./style.css";
 
-const relayUrl =
-  location.hostname === "localhost"
-    ? "ws://localhost:8080"
-    : `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/mine`;
+const relayUrl = `ws://${location.hostname}:8080`;
 
 const statusEl = document.querySelector("#status")!;
 const hashEl = document.querySelector("#hashrate")!;
