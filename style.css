@@ -1,0 +1,6 @@
+:root { font-family: system-ui, sans-serif; color-scheme: dark; }
+body { margin: 0; background: #111; color: #eee; }
+main { max-width: 760px; margin: 4rem auto; padding: 0 1rem; }
+.grid { display: grid; grid-template-columns: 160px 1fr; gap: .5rem 1rem; margin: 2rem 0; }
+button { padding: .7rem 1rem; margin-right: .5rem; font-size: 1rem; }
+pre { margin-top: 2rem; padding: 1rem; background: #181818; min-height: 260px; overflow: auto; }

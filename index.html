@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>YesPower Web Miner — v0.1</title>
+</head>
+<body>
+  <main>
+    <h1>YesPower Web Miner</h1>
+    <p>Mining only starts when you press Start.</p>
+
+    <div class="grid">
+      <div>Status</div><strong id="status">stopped</strong>
+      <div>Hashrate</div><strong id="hashrate">0 H/s</strong>
+      <div>Accepted</div><strong id="accepted">0</strong>
+      <div>Rejected</div><strong id="rejected">0</strong>
+    </div>
+
+    <button id="start">Start mining</button>
+    <button id="stop" disabled>Stop</button>
+
+    <pre id="log"></pre>
+  </main>
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>
