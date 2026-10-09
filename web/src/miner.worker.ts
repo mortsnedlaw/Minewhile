@@ -1,12 +1,22 @@
+import { getWorkerNonceStart } from "./nonce.js";
+
 type Job = {
   jobId: string;
   header76Hex: string;
-  targetHex: string; // 32-byte LE integer
+  targetHex: string;
   extranonce2: string;
   ntime: string;
 };
 
-let cancelled = 0;
+type WorkerJob = {
+  type: "job";
+  job: Job;
+  workerIndex: number;
+  workerCount: number;
+  nonceStart: number;
+};
+
+let currentToken = 0;
 
 function hexToBytes(hex: string): Uint8Array {
   if (hex.length % 2) throw new Error("odd hex");
@@ -16,10 +26,9 @@ function hexToBytes(hex: string): Uint8Array {
 }
 
 function bytesToHex(b: Uint8Array): string {
-  return [...b].map(x => x.toString(16).padStart(2, "0")).join("");
+  return [...b].map((x) => x.toString(16).padStart(2, "0")).join("");
 }
 
-// Compare two unsigned 256-bit little-endian integers.
 function le256LTE(a: Uint8Array, b: Uint8Array): boolean {
   for (let i = 31; i >= 0; i--) {
     if (a[i] < b[i]) return true;
@@ -37,9 +46,9 @@ async function loadWasm() {
   postMessage({ type: "ready" });
 }
 
-const ready = loadWasm().catch(e => postMessage({ type: "error", message: String(e) }));
+const ready = loadWasm().catch((e) => postMessage({ type: "error", message: String(e) }));
 
-async function mine(job: Job, token: number) {
+async function mine(job: Job, workerIndex: number, workerCount: number, nonceStart: number, token: number) {
   await ready;
   if (!mod) return;
 
@@ -49,17 +58,15 @@ async function mine(job: Job, token: number) {
 
   const inPtr = mod._malloc(80);
   const outPtr = mod._malloc(32);
-  let nonce = (Math.random() * 0xffffffff) >>> 0;
+  let nonce = getWorkerNonceStart(nonceStart, workerIndex, workerCount);
   let hashes = 0;
   let sampleStart = performance.now();
 
   try {
-    while (token === cancelled) {
+    while (token === currentToken) {
       const header = new Uint8Array(80);
       header.set(prefix, 0);
 
-      // Match cpuminer's YesPower scan convention: be32enc(nonce)
-      // cpuminer-opt hashes the nonce as the native LE uint32 value.
       header[76] = nonce & 0xff;
       header[77] = (nonce >>> 8) & 0xff;
       header[78] = (nonce >>> 16) & 0xff;
@@ -73,8 +80,6 @@ async function mine(job: Job, token: number) {
       hashes++;
 
       if (le256LTE(hash, target)) {
-        // Stratum submission uses the conventional 8-char nonce hex,
-        // not the byte order used inside the hashed 80-byte header.
         const nonceHex = nonce.toString(16).padStart(8, "0");
         postMessage({
           type: "share",
@@ -82,21 +87,25 @@ async function mine(job: Job, token: number) {
           extranonce2: job.extranonce2,
           ntime: job.ntime,
           nonceHex,
-          hashHex: bytesToHex(hash)
+          hashHex: bytesToHex(hash),
+          workerIndex
         });
       }
 
-      nonce = (nonce + 1) >>> 0;
+      nonce = (nonce + workerCount) >>> 0;
 
-      // Yield periodically so Stop/new jobs are responsive.
       if ((hashes & 31) === 0) {
         const now = performance.now();
         if (now - sampleStart >= 2000) {
-          postMessage({ type: "hashrate", hps: hashes * 1000 / (now - sampleStart) });
+          postMessage({
+            type: "hashrate",
+            workerIndex,
+            hps: (hashes * 1000) / (now - sampleStart)
+          });
           hashes = 0;
           sampleStart = now;
         }
-        await new Promise(r => setTimeout(r, 0));
+        await new Promise((resolve) => setTimeout(resolve, 0));
       }
     }
   } finally {
@@ -105,11 +114,12 @@ async function mine(job: Job, token: number) {
   }
 }
 
-self.onmessage = (ev: MessageEvent) => {
+self.onmessage = (ev: MessageEvent<WorkerJob>) => {
   if (ev.data?.type === "job") {
-    cancelled++;
-    const token = cancelled;
-    mine(ev.data.job, token).catch(e =>
+    currentToken += 1;
+    const token = currentToken;
+    const { job, workerIndex, workerCount, nonceStart } = ev.data;
+    mine(job, workerIndex, workerCount, nonceStart, token).catch((e) =>
       postMessage({ type: "error", message: String(e?.stack ?? e) })
     );
   }

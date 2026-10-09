@@ -1,70 +1,61 @@
-# Browser YesPower Miner — v0.1 "First Share"
+# Minewhile v0.2.0 — Multi-user browser YesPower miner
 
-Goal: prove this exact chain on Ubuntu:
+Minewhile is a browser-based YesPower miner that keeps the known-working v0.1 mining path intact while adding a usable service model:
 
-native cpuminer -> YesPower WASM -> browser receives Stratum work ->
-browser finds share -> relay submits -> upstream pool says ACCEPTED.
+- per-user payout wallet + currency selection
+- 90/10 user/dev mining schedule
+- multiple browser workers with non-overlapping nonce ranges
+- fixed-height scrollable log view
+- server-side relay to control upstream Stratum config
+- production deployment with systemd + Caddy
 
-This is deliberately a narrow PoC. It has:
-- one Web Worker
-- one upstream Stratum connection per browser session
-- standard YesPower 1.0 (N=2048, r=32, no personalization)
-- standard Bitcoin-like Stratum V1 job assembly
-- operator-controlled pool/wallet config
-- no users, database, rewards, Swish, ads, own pool, or autostart
+## Project layout
 
-Mining starts only after the visitor presses Start.
+- relay/: Node.js + TypeScript Stratum relay and session manager
+- web/: Vite + TypeScript browser app and worker pool
+- wasm/: Openwall YesPower -> Emscripten WASM build script
+- vendor/yespower/: upstream YesPower implementation
 
-## 1. Ubuntu prerequisites
+## Local development
 
-```bash
-sudo apt update
-sudo apt install -y git curl build-essential docker.io docker-compose-plugin nodejs npm
-sudo usermod -aG docker "$USER"
-newgrp docker
-```
-
-Node 20+ is recommended. If Ubuntu ships an older Node, install a current LTS release.
-
-## 2. Clone Openwall yespower
+### 1. Install dependencies
 
 ```bash
-git submodule add https://github.com/openwall/yespower.git vendor/yespower
-# or, if this repo already contains the submodule declaration:
-git submodule update --init --recursive
+cd relay && npm install
+cd ../web && npm install
 ```
 
-## 3. Build WASM
+### 2. Configure environment
 
-The first build intentionally uses `yespower-ref.c` for portability/correctness.
-Optimise later.
+```bash
+cp .env.example .env
+```
+
+Then set:
+
+```env
+POOL_HOST=yespower.eu.mine.zpool.ca
+POOL_PORT=6234
+RELAY_HOST=127.0.0.1
+RELAY_PORT=8080
+WEB_ORIGIN=http://localhost:5173
+DEV_WALLET=YOUR_OPERATOR_WALLET
+DEV_CURRENCY=LTC
+DEBUG_STRATUM=0
+```
+
+### 3. Build WASM
 
 ```bash
 ./wasm/build.sh
 ```
 
-Output:
-- `web/public/wasm/yespower.js`
-- `web/public/wasm/yespower.wasm`
-
-## 4. Configure relay
-
-```bash
-cp .env.example relay/.env
-nano relay/.env
-```
-
-Set your upstream YesPower pool, port, payout wallet and password.
-
-Do NOT put the wallet/pool config in browser code.
-
-## 5. Install and run
+### 4. Run relay and frontend
 
 Terminal 1:
 
 ```bash
 cd relay
-npm install
 npm run dev
 ```
 
@@ -72,67 +63,95 @@ Terminal 2:
 
 ```bash
 cd web
-npm install
 npm run dev -- --host 0.0.0.0
 ```
 
-Open the URL printed by Vite and press Start.
+Open the frontend in a browser, choose a supported payout currency and wallet, then press Start.
 
-## 6. Native reference first
+## Production deployment
 
-Before debugging browser mining, prove that the pool accepts ordinary YesPower
-mining with cpuminer-opt.
+### Ubuntu 24.04
 
-Build cpuminer-opt separately and run roughly:
+Install dependencies:
 
 ```bash
-./cpuminer \
-  -a yespower \
-  -o stratum+tcp://POOL_HOST:POOL_PORT \
-  -u YOUR_PAYOUT_ADDRESS \
-  -p 'c=LTC' \
-  -t 1
+sudo apt update
+sudo apt install -y curl git build-essential nodejs npm caddy
 ```
 
-Exact pool host/port/password are pool-specific.
+Then run the production installer:
 
-## Important implementation detail
+```bash
+chmod +x scripts/install-production.sh
+sudo ./scripts/install-production.sh
+```
 
-YesPower uses the same `scrypt_set_target` scaling used by cpuminer:
-the Stratum difficulty is divided by 65536 before conversion to the normal
-Bitcoin diff-1 target. In this PoC that is represented equivalently as:
+The installer builds the relay and web frontend, installs the systemd service, enables it, and restarts the relay.
 
-    scryptDiff1Target / stratumDifficulty
+### Service management
 
-where:
+```bash
+systemctl status minewhile-relay
+systemctl restart minewhile-relay
+journalctl -u minewhile-relay -f
+```
 
-    scryptDiff1Target = bitcoinDiff1Target * 65536
+## Supported payout currencies
 
-Do not "simplify" this to SHA256 difficulty or every share will be wrong.
+BTC, LTC, DASH, DGB, FLUX, RVN
 
-## Stratum header assumptions
+Additional currencies can be added by extending the whitelist in the relay session validation and the frontend currency list.
 
-This PoC implements the common Bitcoin-like Stratum V1 layout:
-- coinbase = coinb1 + extranonce1 + extranonce2 + coinb2
-- merkle = SHA256d(coinbase), then SHA256d(merkle + branch) for each branch
-- version/ntime/nbits: reverse 4 bytes for the 80-byte header
-- prevhash: reverse bytes inside each 4-byte word
-- merkle root: use computed bytes directly
-- nonce: exact 4 bytes scanned by the browser
+## Developer fee schedule
 
-The relay logs the raw `mining.notify` packet and assembled 76-byte prefix.
-Compare this against cpuminer when bringing up a new pool/coin. Algo-switching
-pools can expose coin-specific edge cases.
+The service uses a 90/10 schedule based on elapsed session time, not wall-clock UTC time:
 
-## Definition of done
+- user mode: 9 minutes
+- developer mode: 1 minute
+- repeat the cycle
 
-The release is complete when the browser shows:
+This is the preferred schedule because it spreads the fee evenly across each hour.
 
-    Accepted: 1
+## Security and relay boundaries
 
-and relay logs:
+The browser is never allowed to send:
 
-    SHARE SUBMITTED ...
-    SHARE ACCEPTED
+- upstream pool hostname or port
+- DEV wallet
+- arbitrary Stratum parameters
+- raw shell commands
 
-The accepted share must have been generated by `yespower.wasm`, not cpuminer.
+All browser-controlled values are sanitized and validated on the relay side before they are used to authorize with the upstream pool.
+
+## Build and test
+
+```bash
+cd relay && npm run build && npm test
+cd ../web && npm run build
+```
+
+## Migration from v0.1
+
+1. Keep the existing YesPower WASM and Stratum flow intact.
+2. Update the relay to use per-session user/dev upstream identities.
+3. Update the browser to send a validated start payload.
+4. Restart the relay under systemd for production use.
+
+## Rollback
+
+If a deployment needs to revert to the previous state:
+
+```bash
+sudo systemctl stop minewhile-relay
+git checkout <previous-tag-or-commit>
+cd relay && npm install && npm run build
+cd ../web && npm install && npm run build
+sudo systemctl start minewhile-relay
+```
+
+## Known limitations
+
+- No cryptographic address validation for every supported blockchain in this version.
+- No database or account system.
+- No automatic benchmark/autotuning.
+- The v0.2 release is focused on the working browser miner and production deployment path.

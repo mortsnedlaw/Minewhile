@@ -3,8 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc && vite build"
+    "dev": "bash ../wasm/build.sh && vite",
+    "build": "bash ../wasm/build.sh && tsc && vite build"
   },
   "devDependencies": {
     "typescript": "^5.7.2",

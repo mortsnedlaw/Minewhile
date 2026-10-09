@@ -1,9 +1,10 @@
 import net from "node:net";
 import { EventEmitter } from "node:events";
 import { config } from "./config.js";
-import { buildBrowserJob, NotifyJob, BrowserJob } from "./work.js";
+import { buildBrowserJob, type NotifyJob, type BrowserJob } from "./work.js";
 
 type Rpc = { id?: number | null; method?: string; params?: any[]; result?: any; error?: any };
+type StratumIdentity = { wallet: string; password: string };
 
 export class StratumSession extends EventEmitter {
   private socket = new net.Socket();
@@ -11,12 +12,18 @@ export class StratumSession extends EventEmitter {
   private nextId = 1;
   private subscribeId = 0;
   private authorizeId = 0;
+  private identity: StratumIdentity;
 
   private extranonce1 = "";
   private extranonce2Size = 0;
   private extranonce2Counter = 0n;
   private difficulty = 1;
   private lastBrowserJob: BrowserJob | null = null;
+
+  constructor(identity: StratumIdentity = { wallet: config.devWallet, password: `c=${config.devCurrency}` }) {
+    super();
+    this.identity = identity;
+  }
 
   connect() {
     this.socket.setKeepAlive(true, 30_000);
@@ -47,7 +54,7 @@ export class StratumSession extends EventEmitter {
   submit(jobId: string, extranonce2: string, ntime: string, nonceHex: string) {
     if (!/^[0-9a-fA-F]{8}$/.test(nonceHex)) throw new Error("nonce must be 4-byte hex");
     const id = this.send("mining.submit", [
-      config.wallet,
+      this.identity.wallet,
       jobId,
       extranonce2,
       ntime,
@@ -71,12 +78,11 @@ export class StratumSession extends EventEmitter {
     try { m = JSON.parse(line); }
     catch { this.emit("log", `BAD JSON: ${line}`); return; }
 
-    // subscribe response: result = [subscriptions, extranonce1, extranonce2_size]
     if (m.id === this.subscribeId && Array.isArray(m.result)) {
       this.extranonce1 = String(m.result[1]);
       this.extranonce2Size = Number(m.result[2]);
       this.emit("log", `SUBSCRIBED extranonce1=${this.extranonce1} xnonce2=${this.extranonce2Size}B`);
-      this.authorizeId = this.send("mining.authorize", [config.wallet, config.password]);
+      this.authorizeId = this.send("mining.authorize", [this.identity.wallet, this.identity.password]);
       return;
     }
 
@@ -134,7 +140,6 @@ export class StratumSession extends EventEmitter {
       return;
     }
 
-    // Any other response with an id after authorization is likely submit result.
     if (typeof m.id === "number" && m.id !== this.subscribeId && m.id !== this.authorizeId) {
       const accepted = m.result === true;
       this.emit("shareResult", { id: m.id, accepted, error: m.error ?? null });

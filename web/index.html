@@ -3,24 +3,63 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>YesPower Web Miner — v0.1</title>
+  <title>Minewhile v0.2.0</title>
 </head>
 <body>
-  <main>
-    <h1>YesPower Web Miner</h1>
-    <p>Mining only starts when you press Start.</p>
+  <main class="shell">
+    <header>
+      <h1>MINEWHILE</h1>
+      <p class="subtitle">Browser YesPower Miner</p>
+    </header>
 
-    <div class="grid">
-      <div>Status</div><strong id="status">stopped</strong>
-      <div>Hashrate</div><strong id="hashrate">0 H/s</strong>
-      <div>Accepted</div><strong id="accepted">0</strong>
-      <div>Rejected</div><strong id="rejected">0</strong>
+    <section class="panel">
+      <div class="field-row">
+        <label for="currency">Payout currency</label>
+        <select id="currency"></select>
+      </div>
+
+      <div class="field-row">
+        <label for="wallet">Payout address</label>
+        <input id="wallet" type="text" placeholder="Enter your wallet address" maxlength="128" />
+      </div>
+
+      <div class="field-row">
+        <label for="workerSlider">Mining workers</label>
+        <div class="slider-wrap">
+          <input id="workerSlider" type="range" min="1" max="16" value="4" />
+          <span id="workerValue">4</span>
+        </div>
+      </div>
+
+      <div class="fee-note">
+        Developer fee: 10% — equivalent to 6 minutes per hour supports Minewhile.
+      </div>
+    </section>
+
+    <section class="stats">
+      <div class="stat"><span>Status</span><strong id="status">stopped</strong></div>
+      <div class="stat"><span>Mode</span><strong id="mode">User payout</strong></div>
+      <div class="stat"><span>Hashrate</span><strong id="hashrate">0 H/s</strong></div>
+      <div class="stat"><span>Next switch</span><strong id="countdown">0s</strong></div>
+      <div class="stat"><span>User accepted</span><strong id="userAccepted">0</strong></div>
+      <div class="stat"><span>User rejected</span><strong id="userRejected">0</strong></div>
+      <div class="stat"><span>Minewhile accepted</span><strong id="devAccepted">0</strong></div>
+      <div class="stat"><span>Minewhile rejected</span><strong id="devRejected">0</strong></div>
+    </section>
+
+    <div class="actions">
+      <button id="start" class="primary">START MINING</button>
+      <button id="stop" class="secondary">STOP MINING</button>
     </div>
 
-    <button id="start">Start mining</button>
-    <button id="stop" disabled>Stop</button>
-
-    <pre id="log"></pre>
+    <div class="log-header">
+      <span>LOG</span>
+      <div class="log-controls">
+        <button id="clearLog" type="button">Clear log</button>
+        <label><input id="autoscroll" type="checkbox" checked /> Auto-scroll</label>
+      </div>
+    </div>
+    <pre id="log" aria-live="polite"></pre>
   </main>
   <script type="module" src="/src/main.ts"></script>
 </body>
