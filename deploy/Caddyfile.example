@@ -1,11 +1,15 @@
-minewhile.example {
-    root * /root/Minewhile/web/dist
-    encode gzip
+# Replace minewhile.example.com with your DNS name.
+# Caddy terminates HTTPS, serves the static Vite build, and proxies only /mine.
+minewhile.example.com {
+    encode zstd gzip
 
-    handle /mine* {
+    handle /mine {
         reverse_proxy 127.0.0.1:8080
     }
 
-    try_files {path} /index.html
-    file_server
+    handle {
+        root * /var/www/minewhile
+        try_files {path} /index.html
+        file_server
+    }
 }

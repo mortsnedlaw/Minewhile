@@ -1,4 +1,6 @@
-import { getWorkerNonceStart } from "./nonce.js";
+import { getNextWorkerNonce, getWorkerNonceStart } from "./nonce.js";
+
+type MiningMode = "user" | "dev";
 
 type Job = {
   jobId: string;
@@ -6,15 +8,19 @@ type Job = {
   targetHex: string;
   extranonce2: string;
   ntime: string;
+  mode: MiningMode;
+  generationId: number;
 };
 
-type WorkerJob = {
-  type: "job";
-  job: Job;
-  workerIndex: number;
-  workerCount: number;
-  nonceStart: number;
-};
+type WorkerMessage =
+  | {
+      type: "job";
+      job: Job;
+      workerIndex: number;
+      workerCount: number;
+      nonceSeed: number;
+    }
+  | { type: "stop" };
 
 let currentToken = 0;
 
@@ -25,10 +31,11 @@ function hexToBytes(hex: string): Uint8Array {
   return out;
 }
 
-function bytesToHex(b: Uint8Array): string {
-  return [...b].map((x) => x.toString(16).padStart(2, "0")).join("");
+function bytesToHex(bytes: Uint8Array): string {
+  return [...bytes].map((value) => value.toString(16).padStart(2, "0")).join("");
 }
 
+// YesPower output and relay target are both compared as unsigned LE uint256 values.
 function le256LTE(a: Uint8Array, b: Uint8Array): boolean {
   for (let i = 31; i >= 0; i--) {
     if (a[i] < b[i]) return true;
@@ -46,11 +53,20 @@ async function loadWasm() {
   postMessage({ type: "ready" });
 }
 
-const ready = loadWasm().catch((e) => postMessage({ type: "error", message: String(e) }));
+const ready = loadWasm().catch((error) => {
+  postMessage({ type: "error", message: String(error?.stack ?? error) });
+  throw error;
+});
 
-async function mine(job: Job, workerIndex: number, workerCount: number, nonceStart: number, token: number) {
+async function mine(
+  job: Job,
+  workerIndex: number,
+  workerCount: number,
+  nonceSeed: number,
+  token: number
+) {
   await ready;
-  if (!mod) return;
+  if (!mod || token !== currentToken) return;
 
   const prefix = hexToBytes(job.header76Hex);
   const target = hexToBytes(job.targetHex);
@@ -58,15 +74,17 @@ async function mine(job: Job, workerIndex: number, workerCount: number, nonceSta
 
   const inPtr = mod._malloc(80);
   const outPtr = mod._malloc(32);
-  let nonce = getWorkerNonceStart(nonceStart, workerIndex, workerCount);
+  const header = new Uint8Array(80);
+  header.set(prefix, 0);
+
+  let nonce = getWorkerNonceStart(nonceSeed, workerIndex, workerCount);
   let hashes = 0;
   let sampleStart = performance.now();
 
   try {
     while (token === currentToken) {
-      const header = new Uint8Array(80);
-      header.set(prefix, 0);
-
+      // Preserve the nonce byte order proven by the v0.1 accepted-share path:
+      // native uint32 little-endian in the 80-byte YesPower header.
       header[76] = nonce & 0xff;
       header[77] = (nonce >>> 8) & 0xff;
       header[78] = (nonce >>> 16) & 0xff;
@@ -77,26 +95,27 @@ async function mine(job: Job, workerIndex: number, workerCount: number, nonceSta
       if (rc !== 0) throw new Error(`yp_hash rc=${rc}`);
 
       const hash = new Uint8Array(mod.HEAPU8.slice(outPtr, outPtr + 32));
-      hashes++;
+      hashes += 1;
 
       if (le256LTE(hash, target)) {
-        const nonceHex = nonce.toString(16).padStart(8, "0");
         postMessage({
           type: "share",
           jobId: job.jobId,
           extranonce2: job.extranonce2,
           ntime: job.ntime,
-          nonceHex,
+          nonceHex: nonce.toString(16).padStart(8, "0"),
           hashHex: bytesToHex(hash),
-          workerIndex
+          workerIndex,
+          mode: job.mode,
+          generationId: job.generationId
         });
       }
 
-      nonce = (nonce + workerCount) >>> 0;
+      nonce = getNextWorkerNonce(nonce, workerIndex, workerCount);
 
       if ((hashes & 31) === 0) {
         const now = performance.now();
-        if (now - sampleStart >= 2000) {
+        if (now - sampleStart >= 2_000) {
           postMessage({
             type: "hashrate",
             workerIndex,
@@ -114,13 +133,18 @@ async function mine(job: Job, workerIndex: number, workerCount: number, nonceSta
   }
 }
 
-self.onmessage = (ev: MessageEvent<WorkerJob>) => {
+self.onmessage = (ev: MessageEvent<WorkerMessage>) => {
+  if (ev.data?.type === "stop") {
+    currentToken += 1;
+    return;
+  }
+
   if (ev.data?.type === "job") {
     currentToken += 1;
     const token = currentToken;
-    const { job, workerIndex, workerCount, nonceStart } = ev.data;
-    mine(job, workerIndex, workerCount, nonceStart, token).catch((e) =>
-      postMessage({ type: "error", message: String(e?.stack ?? e) })
+    const { job, workerIndex, workerCount, nonceSeed } = ev.data;
+    mine(job, workerIndex, workerCount, nonceSeed, token).catch((error) =>
+      postMessage({ type: "error", workerIndex, message: String(error?.stack ?? error) })
     );
   }
 };

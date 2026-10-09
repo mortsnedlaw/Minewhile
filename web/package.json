@@ -1,5 +1,5 @@
 {
-  "name": "yespower-web",
+  "name": "minewhile-web",
   "private": true,
   "type": "module",
   "scripts": {
@@ -9,5 +9,6 @@
   "devDependencies": {
     "typescript": "^5.7.2",
     "vite": "^6.0.5"
-  }
+  },
+  "version": "0.2.0"
 }
