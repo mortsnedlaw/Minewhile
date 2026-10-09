@@ -1,0 +1,8 @@
+*.env
+.env
+relay/.env
+node_modules/
+dist/
+web/public/wasm/yespower.js
+web/public/wasm/yespower.wasm
+web/src/generated/

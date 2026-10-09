@@ -1,37 +1,89 @@
 # Minewhile v0.2.0 — Multi-user browser YesPower miner
 
-Minewhile is a browser-based YesPower miner that keeps the known-working v0.1 mining path intact while adding a usable service model:
+Minewhile is an **explicit opt-in** browser miner for YesPower 1.0 (`N=2048`, `r=32`). The browser hashes in Web Workers using WebAssembly and talks to a small Node/TypeScript relay over WebSocket. The relay owns the upstream Stratum connection to Zpool.
 
-- per-user payout wallet + currency selection
-- 90/10 user/dev mining schedule
-- multiple browser workers with non-overlapping nonce ranges
-- fixed-height scrollable log view
-- server-side relay to control upstream Stratum config
-- production deployment with systemd + Caddy
+The original v0.1 path has produced real browser-generated shares accepted by Zpool. v0.2 keeps that mining path intact and adds multi-user payout settings, multiple workers, a transparent 10% developer fee, reconnect handling, a bounded log, and an always-on Ubuntu deployment.
 
-## Project layout
+## What v0.2 adds
 
-- relay/: Node.js + TypeScript Stratum relay and session manager
-- web/: Vite + TypeScript browser app and worker pool
-- wasm/: Openwall YesPower -> Emscripten WASM build script
-- vendor/yespower/: upstream YesPower implementation
+- per-browser payout wallet and payout currency
+- supported payout currencies: `BTC`, `LTC`, `DASH`, `DGB`, `FLUX`, `RVN`
+- multiple Web Workers with disjoint nonce ranges
+- aggregated total hashrate
+- 500-line fixed-height scrollable log
+- USER/DEV share counters
+- transparent 90/10 USER/DEV schedule
+- job generation IDs to reject stale mode-switch shares
+- upstream Stratum reconnect with exponential backoff
+- browser reconnect to the relay after a relay restart
+- exact Origin checking, message limits and per-connection rate limits
+- relay bound to localhost in production
+- systemd + Caddy + HTTPS/WSS production deployment
+
+Mining **never starts just because the page loads**. The user must press **START MINING**.
+
+## Architecture
+
+```text
+Browser
+  ├─ UI / payout settings
+  ├─ N Web Workers
+  └─ YesPower WASM
+         │
+         │ WebSocket /mine
+         ▼
+Caddy :443
+         │
+         ▼
+Minewhile relay 127.0.0.1:8080
+  ├─ USER Stratum identity
+  └─ DEV Stratum identity
+         │
+         ▼
+Zpool YesPower Stratum
+```
+
+The browser cannot choose an upstream host, port, developer wallet, arbitrary Stratum password, or arbitrary TCP destination.
+
+## Clone
+
+Clone with the Openwall YesPower submodule:
+
+```bash
+git clone --recurse-submodules https://github.com/mortsnedlaw/Minewhile.git
+cd Minewhile
+```
+
+If you already cloned without submodules:
+
+```bash
+git submodule update --init --recursive
+```
+
+A downloaded GitHub ZIP does not contain the submodule contents. The production installer detects that case and fetches `vendor/yespower` automatically.
 
 ## Local development
 
-### 1. Install dependencies
+### Requirements
+
+- Node.js 18+
+- npm
+- Docker (used by the Emscripten WASM build)
+- Git
+
+On Ubuntu 24.04:
 
 ```bash
-cd relay && npm install
-cd ../web && npm install
+sudo ./scripts/bootstrap-ubuntu.sh
 ```
 
-### 2. Configure environment
+### Configure relay
 
 ```bash
-cp .env.example .env
+cp relay/.env.example relay/.env
 ```
 
-Then set:
+Edit `relay/.env`:
 
 ```env
 POOL_HOST=yespower.eu.mine.zpool.ca
@@ -44,51 +96,134 @@ DEV_CURRENCY=LTC
 DEBUG_STRATUM=0
 ```
 
-### 3. Build WASM
+`WEB_ORIGIN` is enforced. If you open Vite from another machine, set the exact browser origin, for example:
 
-```bash
-./wasm/build.sh
+```env
+WEB_ORIGIN=http://192.0.2.10:5173
 ```
 
-### 4. Run relay and frontend
+Multiple exact origins can be comma-separated.
 
-Terminal 1:
+If the browser is on another machine and connects directly to the development relay, also set:
+
+```env
+RELAY_HOST=0.0.0.0
+```
+
+Use that only for development; keep the Origin allow-list correct and do not expose port 8080 unnecessarily. Production always forces the relay back to `127.0.0.1`.
+
+### Install, test and run
+
+```bash
+make install
+make test
+```
+
+Then use two terminals.
+
+Relay:
 
 ```bash
 cd relay
 npm run dev
 ```
 
-Terminal 2:
+Frontend:
 
 ```bash
 cd web
 npm run dev -- --host 0.0.0.0
 ```
 
-Open the frontend in a browser, choose a supported payout currency and wallet, then press Start.
+The web command builds the YesPower WASM module before Vite starts.
 
-## Production deployment
+## Developer fee
 
-### Ubuntu 24.04
+Minewhile displays the fee in the UI. The hosted relay uses a **global** ten-minute schedule:
 
-Install dependencies:
-
-```bash
-sudo apt update
-sudo apt install -y curl git build-essential nodejs npm caddy
+```text
+9 minutes  USER payout
+1 minute   Minewhile payout
+repeat
 ```
 
-Then run the production installer:
+That is 10% of mining time, equivalent to six minutes per hour. The cycle is based on server time rather than session start time, so reconnecting does not reset the fee clock.
+
+The browser receives a mode and a `generationId` with each job. Shares from an old generation are rejected by the relay instead of accidentally crossing USER/DEV identities.
+
+Because Minewhile is open source and mining is opt-in, a person who self-hosts modified code can of course change the fee. The official hosted configuration is intentionally transparent rather than hidden.
+
+## Worker model
+
+The browser reads `navigator.hardwareConcurrency` and lets the user choose the worker count. It does **not** automatically consume every logical CPU.
+
+The full 32-bit nonce space is divided into non-overlapping contiguous ranges, one range per Web Worker. All workers get one shared random seed for a job, but the seed is mapped inside each worker's own range. Workers therefore do not duplicate each other's search space even for worker counts such as 3, 6 or 10.
+
+The UI sums each worker's reported H/s into one total hashrate.
+
+## Production install — Ubuntu 24.04
+
+Production uses:
+
+- `/opt/minewhile` — deployed application
+- `/var/www/minewhile` — static frontend
+- `/etc/minewhile/relay.env` — protected relay configuration
+- `minewhile-relay.service` — systemd service
+- Caddy — HTTPS and `/mine` WebSocket reverse proxy
+
+Your DNS name must point to the server before Caddy can obtain a public certificate.
+
+### 1. Clone
 
 ```bash
-chmod +x scripts/install-production.sh
-sudo ./scripts/install-production.sh
+git clone --recurse-submodules https://github.com/mortsnedlaw/Minewhile.git
+cd Minewhile
 ```
 
-The installer builds the relay and web frontend, installs the systemd service, enables it, and restarts the relay.
+### 2. Install OS dependencies
 
-### Service management
+```bash
+sudo ./scripts/bootstrap-ubuntu.sh
+```
+
+### 3. Deploy
+
+First install:
+
+```bash
+sudo MINEWHILE_DOMAIN=mine.example.com \
+  DEV_WALLET=YOUR_OPERATOR_WALLET \
+  DEV_CURRENCY=LTC \
+  ./scripts/install-production.sh
+```
+
+The installer:
+
+1. initializes/fetches the YesPower source if required
+2. copies a clean app tree to `/opt/minewhile`
+3. runs `npm ci`
+4. runs relay tests
+5. builds the relay
+6. builds YesPower WASM + the Vite frontend
+7. publishes the frontend to `/var/www/minewhile`
+8. creates a non-login `minewhile` service account
+9. installs and enables the systemd relay service
+10. creates an isolated Caddy site snippet without replacing unrelated Caddy sites
+11. binds the Node relay only to `127.0.0.1:8080`
+
+After this, closing PuTTY/SSH has no effect on the service.
+
+### Update an existing production install
+
+```bash
+git pull --recurse-submodules
+git submodule update --init --recursive
+sudo MINEWHILE_DOMAIN=mine.example.com ./scripts/install-production.sh
+```
+
+The existing `/etc/minewhile/relay.env` is preserved. Passing `DEV_WALLET` or `DEV_CURRENCY` again explicitly updates those values.
+
+### Service operations
 
 ```bash
 systemctl status minewhile-relay
@@ -96,62 +231,84 @@ systemctl restart minewhile-relay
 journalctl -u minewhile-relay -f
 ```
 
-## Supported payout currencies
+Caddy:
 
-BTC, LTC, DASH, DGB, FLUX, RVN
+```bash
+systemctl status caddy
+caddy validate --config /etc/caddy/Caddyfile
+journalctl -u caddy -f
+```
 
-Additional currencies can be added by extending the whitelist in the relay session validation and the frontend currency list.
+Public ports should only need HTTP/HTTPS (`80/443`) plus SSH as appropriate. The relay listens on localhost and Vite is not used in production.
 
-## Developer fee schedule
+## Security boundaries
 
-The service uses a 90/10 schedule based on elapsed session time, not wall-clock UTC time:
+The relay currently provides the following guardrails:
 
-- user mode: 9 minutes
-- developer mode: 1 minute
-- repeat the cycle
+- exact Origin allow-list from `WEB_ORIGIN`
+- maximum WebSocket payload of 16 KiB
+- maximum 8 concurrent browser connections per source IP
+- general, START and share-submit rate limits
+- payout currency whitelist
+- payout address length/control-character validation
+- server-side DEV wallet
+- fixed upstream pool host and port
+- active job + mode + generation validation before a share reaches Stratum
+- exact `ntime` and `extranonce2` match against the active job
+- relay bound to `127.0.0.1` in production
 
-This is the preferred schedule because it spreads the fee evenly across each hour.
-
-## Security and relay boundaries
-
-The browser is never allowed to send:
-
-- upstream pool hostname or port
-- DEV wallet
-- arbitrary Stratum parameters
-- raw shell commands
-
-All browser-controlled values are sanitized and validated on the relay side before they are used to authorize with the upstream pool.
+Minewhile intentionally does **not** attempt complete cryptographic validation of every supported coin address. Zpool remains authoritative for whether a payout address/currency pair is useful.
 
 ## Build and test
 
 ```bash
-cd relay && npm run build && npm test
-cd ../web && npm run build
+make test
+make build
 ```
 
-## Migration from v0.1
+Or directly:
 
-1. Keep the existing YesPower WASM and Stratum flow intact.
-2. Update the relay to use per-session user/dev upstream identities.
-3. Update the browser to send a validated start payload.
-4. Restart the relay under systemd for production use.
+```bash
+cd relay
+npm ci
+npm test
+npm run build
+
+cd ../web
+npm ci
+npm run build
+```
+
+`web/npm run build` invokes `wasm/build.sh`, which uses the Emscripten Docker image.
+
+A regression test contains a captured real Zpool v0.1 `mining.notify` fixture and asserts that Minewhile still produces the exact known 76-byte header prefix. The v0.1 nonce byte order and YesPower target path are deliberately documented in code and should not be casually "cleaned up".
+
+## Debugging
+
+For normal operation keep:
+
+```env
+DEBUG_STRATUM=0
+```
+
+Enable `DEBUG_STRATUM=1` only when debugging Stratum. Raw protocol lines and full header prefixes are intentionally suppressed from the normal browser log.
 
 ## Rollback
 
-If a deployment needs to revert to the previous state:
+The production installer deploys whatever checkout you give it. To roll back:
 
 ```bash
-sudo systemctl stop minewhile-relay
-git checkout <previous-tag-or-commit>
-cd relay && npm install && npm run build
-cd ../web && npm install && npm run build
-sudo systemctl start minewhile-relay
+git checkout <known-good-tag-or-commit>
+git submodule update --init --recursive
+sudo MINEWHILE_DOMAIN=mine.example.com ./scripts/install-production.sh
 ```
 
-## Known limitations
+## Known limitations / next steps
 
-- No cryptographic address validation for every supported blockchain in this version.
+- YesPower currently uses the reference implementation compiled to WASM; optimization is a separate performance step.
+- No CPU auto-tuning yet; worker count is user-selected.
 - No database or account system.
-- No automatic benchmark/autotuning.
-- The v0.2 release is focused on the working browser miner and production deployment path.
+- No own pool, coin, Swish payout, ads, referral system, or multi-algorithm switching.
+- No full per-currency blockchain address validation.
+
+The next performance-oriented milestone should benchmark an optimized YesPower WASM build and add optional worker auto-tuning **without changing the already-proven header/nonce/target behavior**.

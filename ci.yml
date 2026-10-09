@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout including yespower
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Ensure yespower source
+        run: ./scripts/ensure-yespower.sh
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: |
+            relay/package-lock.json
+            web/package-lock.json
+
+      - name: Relay dependencies
+        working-directory: relay
+        run: npm ci
+
+      - name: Relay tests
+        working-directory: relay
+        run: npm test
+
+      - name: Relay build
+        working-directory: relay
+        run: npm run build
+
+      - name: Web dependencies
+        working-directory: web
+        run: npm ci
+
+      - name: Web build including YesPower WASM
+        working-directory: web
+        run: npm run build

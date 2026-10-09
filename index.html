@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="Minewhile — opt-in browser YesPower miner" />
+  <title>Minewhile v0.2.0</title>
+</head>
+<body>
+  <main class="shell">
+    <header>
+      <h1>MINEWHILE</h1>
+      <p class="subtitle">Opt-in browser YesPower miner</p>
+    </header>
+
+    <section class="panel" aria-labelledby="settings-heading">
+      <h2 id="settings-heading">Mining settings</h2>
+
+      <div class="field-row">
+        <label for="currency">Payout currency</label>
+        <select id="currency"></select>
+      </div>
+
+      <div class="field-row">
+        <label for="wallet">Payout address</label>
+        <input id="wallet" type="text" placeholder="Enter your wallet address" maxlength="128" autocomplete="off" spellcheck="false" />
+      </div>
+
+      <div class="field-row">
+        <label for="workerSlider">Mining workers</label>
+        <div class="slider-wrap">
+          <input id="workerSlider" type="range" min="1" max="16" value="4" />
+          <strong><span id="workerValue">4</span> workers</strong>
+        </div>
+      </div>
+
+      <div class="field-row compact-row">
+        <span class="field-label">Logical CPU threads detected</span>
+        <strong id="detectedThreads">—</strong>
+      </div>
+
+      <div class="fee-note">
+        <strong>Developer fee: 10%.</strong>
+        Minewhile uses one minute in every ten-minute global cycle — equivalent to six minutes per hour.
+      </div>
+    </section>
+
+    <section class="stats" aria-label="Mining status">
+      <div class="stat"><span>Status</span><strong id="status">stopped</strong></div>
+      <div class="stat"><span>Mode</span><strong id="mode">User payout</strong></div>
+      <div class="stat"><span>Total hashrate</span><strong id="hashrate">0 H/s</strong></div>
+      <div class="stat"><span>Active workers</span><strong id="activeWorkers">0 / 0</strong></div>
+      <div class="stat"><span>Stratum difficulty</span><strong id="difficulty">—</strong></div>
+      <div class="stat"><span>Next mode switch</span><strong id="countdown">—</strong></div>
+      <div class="stat"><span>Session time</span><strong id="sessionTime">0:00</strong></div>
+      <div class="stat"><span>User accepted</span><strong id="userAccepted">0</strong></div>
+      <div class="stat"><span>User rejected</span><strong id="userRejected">0</strong></div>
+      <div class="stat"><span>Minewhile accepted</span><strong id="devAccepted">0</strong></div>
+      <div class="stat"><span>Minewhile rejected</span><strong id="devRejected">0</strong></div>
+    </section>
+
+    <div class="actions">
+      <button id="start" class="primary">START MINING</button>
+      <button id="stop" class="secondary">STOP MINING</button>
+    </div>
+
+    <section aria-labelledby="log-heading">
+      <div class="log-header">
+        <strong id="log-heading">LOG</strong>
+        <div class="log-controls">
+          <button id="clearLog" type="button">Clear log</button>
+          <label><input id="autoscroll" type="checkbox" checked /> Auto-scroll</label>
+        </div>
+      </div>
+      <pre id="log" aria-live="polite"></pre>
+    </section>
+  </main>
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>

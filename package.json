@@ -1,0 +1,14 @@
+{
+  "name": "minewhile-web",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bash ../wasm/build.sh && vite",
+    "build": "bash ../wasm/build.sh && tsc && vite build"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2",
+    "vite": "^6.0.5"
+  },
+  "version": "0.2.0"
+}
