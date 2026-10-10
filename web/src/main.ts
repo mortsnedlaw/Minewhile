@@ -7,7 +7,8 @@ const relayUrl = isViteDev
 
 const MAX_LOG_LINES = 500;
 const MAX_BROWSER_WORKERS = 64;
-const SUPPORTED_CURRENCIES = ["BTC", "LTC", "DASH", "DGB", "FLUX", "RVN"] as const;
+const SUPPORTED_CURRENCIES = ["BTC", "LTC", "BCH", "DASH", "ADVC", "ARRR", "BC2", "BCH2", "BELLS", "BTCZ", "BTGS", "CAP", "CAT", "CHI", "CY", "DGB", "DOGE", "DOGM", "EAC", "EQPAY", "EVR", "FJAR", "FLUX", "GBX", "GRR", "GRS", "HOOT", "KCCC", "KMD", "KRGN", "KV5", "LC2", "LCN", "LPEPE", "MAXI", "MCL", "MEC", "MECU", "MEWC", "MONA", "MYT", "NENG", "OBTC", "PAC", "PEPEW", "PLSR", "PPC", "RIN", "RTM", "RVN", "RXD", "SCC", "SKYDOGE", "SOH", "SWAMP", "TLS", "URSA", "VTC", "WDC", "WJK", "XDN", "YEC", "ZCL", "ZER"] as const;
+const GUARANTEED_CURRENCIES = new Set(["BTC", "LTC", "DASH", "DGB", "FLUX", "RVN"]);
 const STORAGE_PREFIX = "minewhile";
 
 type MiningMode = "user" | "dev";
@@ -42,6 +43,14 @@ const workerValue = document.querySelector("#workerValue")!;
 const autoScrollToggle = document.querySelector<HTMLInputElement>("#autoscroll")!;
 const clearLogBtn = document.querySelector<HTMLButtonElement>("#clearLog")!;
 const countdownEl = document.querySelector("#countdown")!;
+const unpaidEl = document.querySelector("#walletUnpaid")!;
+const balanceEl = document.querySelector("#walletBalance")!;
+const paid24hEl = document.querySelector("#walletPaid24h")!;
+const totalEarnedEl = document.querySelector("#walletTotal")!;
+const sessionChangeEl = document.querySelector("#walletSessionChange")!;
+const lastPayoutEl = document.querySelector("#lastPayout")!;
+const recentBlocksEl = document.querySelector("#recentBlocks")!;
+const statsUpdatedEl = document.querySelector("#statsUpdated")!;
 
 let ws: WebSocket | null = null;
 let reconnectTimer: number | null = null;
@@ -51,6 +60,7 @@ let currentMode: MiningMode = "user";
 let countdownDeadline = 0;
 let sessionStartedAt = 0;
 let autoScroll = true;
+let walletBaselineTotal: number | null = null;
 
 const workers = new Map<number, Worker>();
 const workerRates = new Map<number, number>();
@@ -103,6 +113,61 @@ function formatDuration(totalSeconds: number): string {
     : `${minutes}:${String(rest).padStart(2, "0")}`;
 }
 
+function formatCoinAmount(value: unknown): string {
+  const n = Number(value);
+  return Number.isFinite(n) ? n.toFixed(8) : "—";
+}
+
+function formatBlockAge(unixSeconds: unknown): string {
+  const seconds = Math.max(0, Math.floor(Date.now() / 1000 - Number(unixSeconds || 0)));
+  if (!Number.isFinite(seconds)) return "—";
+  if (seconds < 60) return `${seconds}s`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h`;
+  return `${Math.floor(seconds / 86400)}d`;
+}
+
+function requestWalletStats() {
+  if (!miningRequested || ws?.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: "stats" }));
+}
+
+function updateWalletStats(message: any) {
+  const currency = currencyEl.value;
+  const total = Number(message.total ?? 0);
+  if (walletBaselineTotal === null) walletBaselineTotal = total;
+  const delta = total - walletBaselineTotal;
+
+  unpaidEl.textContent = `${formatCoinAmount(message.unpaid)} ${currency}`;
+  balanceEl.textContent = `${formatCoinAmount(message.balance)} ${currency}`;
+  paid24hEl.textContent = `${formatCoinAmount(message.paid24h)} ${currency}`;
+  totalEarnedEl.textContent = `${formatCoinAmount(total)} ${currency}`;
+  sessionChangeEl.textContent = `${delta >= 0 ? "+" : ""}${formatCoinAmount(delta)} ${currency}`;
+
+  const payouts = Array.isArray(message.payouts) ? message.payouts : [];
+  if (payouts.length) {
+    const latest = payouts[0];
+    const when = latest.time ? new Date(Number(latest.time) * 1000).toLocaleString() : "";
+    lastPayoutEl.textContent = `${formatCoinAmount(latest.amount)} ${currency}${when ? ` · ${when}` : ""}`;
+  } else {
+    lastPayoutEl.textContent = "No payout reported yet";
+  }
+
+  const blocks = Array.isArray(message.recentBlocks) ? message.recentBlocks : [];
+  recentBlocksEl.innerHTML = blocks.length
+    ? blocks.map((block: any) => `
+        <div class="block-row">
+          <strong>${String(block.coin || "—")}</strong>
+          <span>#${String(block.height || "—")}</span>
+          <span>${formatCoinAmount(block.amount)}</span>
+          <span>${formatBlockAge(block.time)} ago</span>
+          <span>${String(block.category || "")}</span>
+        </div>`).join("")
+    : `<div class="empty-state">No recent standard YesPower blocks reported.</div>`;
+
+  statsUpdatedEl.textContent = `Updated ${new Date().toLocaleTimeString()}`;
+}
+
 function updateHashrate() {
   const total = [...workerRates.values()].reduce((sum, value) => sum + value, 0);
   hashEl.textContent = formatHashrate(total);
@@ -149,6 +214,7 @@ function resetSessionStats() {
   currentJob = null;
   countdownDeadline = 0;
   sessionStartedAt = Date.now();
+  walletBaselineTotal = null;
   updateShareCounts();
   updateHashrate();
   difficultyEl.textContent = "—";
@@ -337,6 +403,11 @@ function connectRelay() {
       return;
     }
 
+    if (message.type === "wallet_stats") {
+      updateWalletStats(message);
+      return;
+    }
+
     if (message.type === "error") {
       log(`RELAY ERROR ${message.message}`);
       return;
@@ -344,6 +415,7 @@ function connectRelay() {
 
     if (message.type === "started") {
       log(`Mining started for ${message.payoutCurrency}: ${String(message.payoutAddress).slice(0, 8)}...`);
+      requestWalletStats();
       return;
     }
 
@@ -418,7 +490,16 @@ const detectedThreads = Math.max(1, navigator.hardwareConcurrency || 1);
 const maxWorkers = Math.max(1, Math.min(MAX_BROWSER_WORKERS, detectedThreads));
 const defaultWorkers = Math.max(1, Math.min(4, Math.floor(detectedThreads / 2) || 1));
 
-currencyEl.innerHTML = SUPPORTED_CURRENCIES.map((currency) => `<option value="${currency}">${currency}</option>`).join("");
+currencyEl.innerHTML = [
+  `<optgroup label="Guaranteed payout">${SUPPORTED_CURRENCIES
+    .filter((currency) => GUARANTEED_CURRENCIES.has(currency))
+    .map((currency) => `<option value="${currency}">${currency}</option>`)
+    .join("")}</optgroup>`,
+  `<optgroup label="Other payout currencies">${SUPPORTED_CURRENCIES
+    .filter((currency) => !GUARANTEED_CURRENCIES.has(currency))
+    .map((currency) => `<option value="${currency}">${currency}</option>`)
+    .join("")}</optgroup>`
+].join("");
 currencyEl.value = readStored("currency", "LTC");
 walletEl.value = readStored("wallet", "");
 workerSlider.min = "1";
@@ -441,6 +522,8 @@ clearLogBtn.onclick = () => {
 };
 startBtn.onclick = startMining;
 stopBtn.onclick = stopMining;
+
+window.setInterval(requestWalletStats, 30_000);
 
 window.setInterval(() => {
   countdownEl.textContent = countdownDeadline > 0

@@ -49,7 +49,9 @@ test("global fee schedule is 9 minutes user + 1 minute dev and reconnect-indepen
 });
 
 test("start validation rejects unsupported currencies and malformed data", () => {
-  assert.equal(validateStartRequest({ type: "start", payoutCurrency: "DOGE", payoutAddress: "abc", workerCount: 2 }).valid, false);
+  assert.equal(validateStartRequest({ type: "start", payoutCurrency: "DOGE", payoutAddress: "abc", workerCount: 2 }).valid, true);
+  assert.equal(validateStartRequest({ type: "start", payoutCurrency: "NENG", payoutAddress: "abc", workerCount: 2 }).valid, true);
+  assert.equal(validateStartRequest({ type: "start", payoutCurrency: "NOTACOIN", payoutAddress: "abc", workerCount: 2 }).valid, false);
   assert.equal(validateStartRequest({ type: "start", payoutCurrency: "LTC", payoutAddress: "bad\nvalue", workerCount: 2 }).valid, false);
   assert.equal(validateStartRequest({ type: "start", payoutCurrency: "LTC", payoutAddress: "abc", workerCount: 0 }).valid, false);
 

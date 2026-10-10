@@ -102,7 +102,7 @@ export class StratumSession extends EventEmitter {
     });
 
     socket.connect(config.poolPort, config.poolHost, () => {
-      this.emit("log", `CONNECTED ${config.poolHost}:${config.poolPort}`);
+      this.emit("log", "CONNECTED");
       this.subscribeId = this.send("mining.subscribe", ["Minewhile/0.2"]);
     });
   }

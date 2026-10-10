@@ -1,6 +1,6 @@
 import "dotenv/config";
 
-export const SUPPORTED_PAYOUT_CURRENCIES = ["BTC", "LTC", "DASH", "DGB", "FLUX", "RVN"] as const;
+export const SUPPORTED_PAYOUT_CURRENCIES = ["BTC", "LTC", "BCH", "DASH", "ADVC", "ARRR", "BC2", "BCH2", "BELLS", "BTCZ", "BTGS", "CAP", "CAT", "CHI", "CY", "DGB", "DOGE", "DOGM", "EAC", "EQPAY", "EVR", "FJAR", "FLUX", "GBX", "GRR", "GRS", "HOOT", "KCCC", "KMD", "KRGN", "KV5", "LC2", "LCN", "LPEPE", "MAXI", "MCL", "MEC", "MECU", "MEWC", "MONA", "MYT", "NENG", "OBTC", "PAC", "PEPEW", "PLSR", "PPC", "RIN", "RTM", "RVN", "RXD", "SCC", "SKYDOGE", "SOH", "SWAMP", "TLS", "URSA", "VTC", "WDC", "WJK", "XDN", "YEC", "ZCL", "ZER"] as const;
 export type SupportedCurrency = (typeof SUPPORTED_PAYOUT_CURRENCIES)[number];
 
 function parseOrigins(value: string): string[] {

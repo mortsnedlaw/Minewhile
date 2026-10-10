@@ -39,10 +39,6 @@
         <strong id="detectedThreads">—</strong>
       </div>
 
-      <div class="fee-note">
-        <strong>Developer fee: 10%.</strong>
-        Minewhile uses one minute in every ten-minute global cycle — equivalent to six minutes per hour.
-      </div>
     </section>
 
     <section class="stats" aria-label="Mining status">
@@ -50,7 +46,7 @@
       <div class="stat"><span>Mode</span><strong id="mode">User payout</strong></div>
       <div class="stat"><span>Total hashrate</span><strong id="hashrate">0 H/s</strong></div>
       <div class="stat"><span>Active workers</span><strong id="activeWorkers">0 / 0</strong></div>
-      <div class="stat"><span>Stratum difficulty</span><strong id="difficulty">—</strong></div>
+      <div class="stat"><span>Mining difficulty</span><strong id="difficulty">—</strong></div>
       <div class="stat"><span>Next mode switch</span><strong id="countdown">—</strong></div>
       <div class="stat"><span>Session time</span><strong id="sessionTime">0:00</strong></div>
       <div class="stat"><span>User accepted</span><strong id="userAccepted">0</strong></div>
@@ -59,10 +55,34 @@
       <div class="stat"><span>Minewhile rejected</span><strong id="devRejected">0</strong></div>
     </section>
 
+
+    <section class="panel earnings-panel" aria-labelledby="earnings-heading">
+      <div class="section-heading">
+        <h2 id="earnings-heading">Your earnings</h2>
+        <span id="statsUpdated" class="subtle">Starts updating when mining begins</span>
+      </div>
+      <div class="earnings-grid">
+        <div class="metric"><span>Pending / unpaid</span><strong id="walletUnpaid">—</strong></div>
+        <div class="metric"><span>Confirmed balance</span><strong id="walletBalance">—</strong></div>
+        <div class="metric"><span>Paid last 24h</span><strong id="walletPaid24h">—</strong></div>
+        <div class="metric"><span>Total earned</span><strong id="walletTotal">—</strong></div>
+        <div class="metric"><span>Wallet change this session</span><strong id="walletSessionChange">—</strong></div>
+        <div class="metric"><span>Last payout</span><strong id="lastPayout">—</strong></div>
+      </div>
+      <div class="blocks-heading">
+        <h2>Recent YesPower blocks</h2>
+        <span class="subtle">Pool-wide blocks; not necessarily found by this browser.</span>
+      </div>
+      <div id="recentBlocks" class="block-list">
+        <div class="empty-state">Block data appears after mining starts.</div>
+      </div>
+    </section>
+
     <div class="actions">
       <button id="start" class="primary">START MINING</button>
       <button id="stop" class="secondary">STOP MINING</button>
     </div>
+    <p class="support-note">10% of mining time supports Minewhile.</p>
 
     <section aria-labelledby="log-heading">
       <div class="log-header">

@@ -2,6 +2,7 @@ import type { IncomingMessage } from "node:http";
 import { WebSocketServer, type RawData } from "ws";
 import { assertRuntimeConfig, config, isAllowedOrigin } from "./config.js";
 import { SlidingWindowRateLimiter } from "./rateLimit.js";
+import { getWalletStats } from "./poolStats.js";
 import { MiningSession, validateStartRequest, type MiningMode } from "./session.js";
 
 assertRuntimeConfig();
@@ -58,6 +59,8 @@ wss.on("connection", (ws, req) => {
   const allMessages = new SlidingWindowRateLimiter(600, 60_000);
   const startMessages = new SlidingWindowRateLimiter(4, 60_000);
   const submitMessages = new SlidingWindowRateLimiter(300, 60_000);
+  const statsMessages = new SlidingWindowRateLimiter(6, 60_000);
+  let activeWallet: string | null = null;
   let closed = false;
 
   const send = (x: unknown) => {
@@ -79,7 +82,7 @@ wss.on("connection", (ws, req) => {
   session.on("error", (payload: any) => {
     const error = payload?.error ?? payload;
     console.error(`[${ip}]`, error);
-    send({ type: "error", message: error instanceof Error ? error.message : String(error) });
+    send({ type: "error", message: "Mining backend error." });
   });
   session.on("closed", () => send({ type: "stopped" }));
 
@@ -114,6 +117,7 @@ wss.on("connection", (ws, req) => {
       }
       try {
         session.start(check.value);
+        activeWallet = check.value.payoutAddress;
         send({
           type: "started",
           payoutCurrency: check.value.payoutCurrency,
@@ -127,7 +131,23 @@ wss.on("connection", (ws, req) => {
     }
 
     if (message.type === "stop") {
+      activeWallet = null;
       session.close();
+      return;
+    }
+
+    if (message.type === "stats") {
+      if (!statsMessages.allow()) {
+        send({ type: "error", message: "Stats refresh rate limit exceeded." });
+        return;
+      }
+      if (!activeWallet) {
+        send({ type: "error", message: "Start mining before requesting wallet stats." });
+        return;
+      }
+      void getWalletStats(activeWallet)
+        .then((stats) => send({ type: "wallet_stats", ...stats }))
+        .catch(() => send({ type: "error", message: "Mining statistics are temporarily unavailable." }));
       return;
     }
 
@@ -158,6 +178,7 @@ wss.on("connection", (ws, req) => {
   ws.on("close", () => {
     if (closed) return;
     closed = true;
+    activeWallet = null;
     session.close();
     const nextCount = Math.max(0, (activeConnectionsByIp.get(ip) ?? 1) - 1);
     if (nextCount === 0) activeConnectionsByIp.delete(ip);

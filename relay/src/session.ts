@@ -178,7 +178,8 @@ export class MiningSession extends EventEmitter {
   }
 
   private attachUpstream(upstream: StratumSession, mode: MiningMode) {
-    upstream.on("log", (message: string) => this.emit("log", `${mode.toUpperCase()} ${message}`));
+    const publicLabel = mode === "dev" ? "MINEWHILE" : "USER";
+    upstream.on("log", (message: string) => this.emit("log", `${publicLabel} ${message}`));
     upstream.on("debug", (message: string) => this.emit("debug", `${mode.toUpperCase()} ${message}`));
     upstream.on("difficulty", (value: number) => this.emit("difficulty", { mode, value }));
 
