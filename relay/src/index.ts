@@ -7,8 +7,18 @@ import { MiningSession, validateStartRequest, type MiningMode } from "./session.
 
 assertRuntimeConfig();
 
-const MAX_CONNECTIONS_PER_IP = 8;
+function envInt(name: string, fallback: number, min: number, max: number): number {
+  const value = Number(process.env[name] ?? fallback);
+  return Number.isInteger(value) && value >= min && value <= max ? value : fallback;
+}
+
+const MAX_CONNECTIONS_PER_IP = envInt("MAX_CONNECTIONS_PER_IP", 4, 1, 100);
+const MAX_GLOBAL_CONNECTIONS = envInt("MAX_GLOBAL_CONNECTIONS", 500, 1, 100_000);
+const MAX_CONNECTION_ATTEMPTS_PER_MINUTE = envInt("MAX_CONNECTION_ATTEMPTS_PER_MINUTE", 20, 1, 10_000);
+
 const activeConnectionsByIp = new Map<string, number>();
+const connectionAttemptsByIp = new Map<string, SlidingWindowRateLimiter>();
+let activeConnections = 0;
 
 function clientIp(req: IncomingMessage): string {
   const remote = req.socket.remoteAddress ?? "unknown";
@@ -46,14 +56,36 @@ wss.on("connection", (ws, req) => {
     return;
   }
 
+  let connectionAttempts = connectionAttemptsByIp.get(ip);
+  if (!connectionAttempts) {
+    connectionAttempts = new SlidingWindowRateLimiter(MAX_CONNECTION_ATTEMPTS_PER_MINUTE, 60_000);
+    connectionAttemptsByIp.set(ip, connectionAttempts);
+  }
+
+  if (!connectionAttempts.allow()) {
+    ws.close(1013, "Too many connection attempts");
+    return;
+  }
+
   const currentConnections = activeConnectionsByIp.get(ip) ?? 0;
   if (currentConnections >= MAX_CONNECTIONS_PER_IP) {
     ws.close(1013, "Too many connections");
     return;
   }
-  activeConnectionsByIp.set(ip, currentConnections + 1);
 
-  console.log("BROWSER CONNECT", { ip, origin });
+  if (activeConnections >= MAX_GLOBAL_CONNECTIONS) {
+    ws.close(1013, "Relay capacity reached");
+    return;
+  }
+
+  activeConnectionsByIp.set(ip, currentConnections + 1);
+  activeConnections += 1;
+
+  console.log("BROWSER CONNECT", {
+    ip,
+    origin,
+    activeConnections
+  });
 
   const session = new MiningSession();
   const allMessages = new SlidingWindowRateLimiter(600, 60_000);
@@ -82,9 +114,18 @@ wss.on("connection", (ws, req) => {
   session.on("error", (payload: any) => {
     const error = payload?.error ?? payload;
     console.error(`[${ip}]`, error);
-    send({ type: "error", message: "Mining backend error." });
+    const message =
+      error instanceof Error && /Authorization rejected/i.test(error.message)
+        ? "Payout address/currency was rejected by the mining backend."
+        : "Mining backend error.";
+    send({ type: "error", message });
   });
   session.on("closed", () => send({ type: "stopped" }));
+  session.on("abuse", (reason: string) => {
+    console.warn("BROWSER ABUSE", { ip, reason });
+    send({ type: "error", message: reason });
+    ws.close(1008, "Invalid proof of work");
+  });
 
   ws.on("message", (raw) => {
     if (!allMessages.allow()) {
@@ -158,13 +199,19 @@ wss.on("connection", (ws, req) => {
       }
       try {
         const mode: MiningMode = message.mode === "dev" ? "dev" : "user";
-        session.submit({
+        void session.submit({
           jobId: String(message.jobId ?? ""),
           extranonce2: String(message.extranonce2 ?? ""),
           ntime: String(message.ntime ?? ""),
           nonceHex: String(message.nonceHex ?? ""),
           mode,
           generationId: Number(message.generationId)
+        }).catch((error: any) => {
+          console.warn(`[${ip}] share rejected locally`, error?.message ?? String(error));
+          send({
+            type: "error",
+            message: error?.message ?? "Share validation failed."
+          });
         });
       } catch (error: any) {
         send({ type: "error", message: error?.message ?? String(error) });
@@ -183,6 +230,8 @@ wss.on("connection", (ws, req) => {
     const nextCount = Math.max(0, (activeConnectionsByIp.get(ip) ?? 1) - 1);
     if (nextCount === 0) activeConnectionsByIp.delete(ip);
     else activeConnectionsByIp.set(ip, nextCount);
-    console.log("BROWSER CLOSED", { ip });
+
+    activeConnections = Math.max(0, activeConnections - 1);
+    console.log("BROWSER CLOSED", { ip, activeConnections });
   });
 });

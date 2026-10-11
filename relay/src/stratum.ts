@@ -7,6 +7,7 @@ type Rpc = { id?: number | null; method?: string; params?: any[]; result?: any; 
 type StratumIdentity = { wallet: string; password: string };
 
 const RECONNECT_DELAYS_MS = [1_000, 2_000, 5_000, 10_000, 30_000];
+const MAX_STRATUM_LINE_BYTES = 1_048_576;
 
 export class StratumSession extends EventEmitter {
   private socket: net.Socket | null = null;
@@ -103,7 +104,7 @@ export class StratumSession extends EventEmitter {
 
     socket.connect(config.poolPort, config.poolHost, () => {
       this.emit("log", "CONNECTED");
-      this.subscribeId = this.send("mining.subscribe", ["Minewhile/0.2"]);
+      this.subscribeId = this.send("mining.subscribe", ["Minewhile/0.9"]);
     });
   }
 
@@ -132,11 +133,25 @@ export class StratumSession extends EventEmitter {
 
   private onData(chunk: Buffer) {
     this.buf += chunk.toString("utf8");
+
     let idx: number;
     while ((idx = this.buf.indexOf("\n")) >= 0) {
       const line = this.buf.slice(0, idx).trim();
       this.buf = this.buf.slice(idx + 1);
+
+      if (Buffer.byteLength(line, "utf8") > MAX_STRATUM_LINE_BYTES) {
+        this.emit("error", new Error("Oversized Stratum line"));
+        this.socket?.destroy();
+        return;
+      }
+
       if (line) this.onLine(line);
+    }
+
+    if (Buffer.byteLength(this.buf, "utf8") > MAX_STRATUM_LINE_BYTES) {
+      this.emit("error", new Error("Oversized unterminated Stratum message"));
+      this.buf = "";
+      this.socket?.destroy();
     }
   }
 

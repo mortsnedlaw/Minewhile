@@ -1,9 +1,12 @@
 const API_BASE = "https://www.zpool.ca/api";
 const FETCH_TIMEOUT_MS = 8_000;
 const PUBLIC_CACHE_MS = 30_000;
+const WALLET_CACHE_MS = 30_000;
 
 type JsonObject = Record<string, any>;
 let publicCache: { expiresAt: number; currencies: JsonObject; blocks: any[] } | null = null;
+const walletCache = new Map<string, { expiresAt: number; value: any }>();
+const walletInflight = new Map<string, Promise<any>>();
 
 function asNumber(value: unknown): number {
   const n = Number(value);
@@ -25,6 +28,28 @@ async function fetchJson(path: string): Promise<any> {
   }
 }
 
+async function getWalletRaw(address: string) {
+  const now = Date.now();
+  const cached = walletCache.get(address);
+  if (cached && cached.expiresAt > now) return cached.value;
+
+  const existing = walletInflight.get(address);
+  if (existing) return existing;
+
+  const request = fetchJson(`/walletEX?address=${encodeURIComponent(address)}`)
+    .then((value) => {
+      walletCache.set(address, {
+        expiresAt: Date.now() + WALLET_CACHE_MS,
+        value
+      });
+      return value;
+    })
+    .finally(() => walletInflight.delete(address));
+
+  walletInflight.set(address, request);
+  return request;
+}
+
 async function getPublicPoolData() {
   const now = Date.now();
   if (publicCache && publicCache.expiresAt > now) return publicCache;
@@ -40,7 +65,7 @@ async function getPublicPoolData() {
 
 export async function getWalletStats(address: string) {
   const [walletRaw, publicData] = await Promise.all([
-    fetchJson(`/walletEX?address=${encodeURIComponent(address)}`),
+    getWalletRaw(address),
     getPublicPoolData()
   ]);
   const wallet = walletRaw && typeof walletRaw === "object" ? walletRaw : {};

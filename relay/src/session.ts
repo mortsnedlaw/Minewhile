@@ -7,6 +7,7 @@ import {
 } from "./config.js";
 import { StratumSession } from "./stratum.js";
 import type { BrowserJob } from "./work.js";
+import { validateYespowerShare } from "./validator.js";
 
 export const USER_MODE_DURATION_MS = 9 * 60 * 1000;
 export const DEV_MODE_DURATION_MS = 60 * 1000;
@@ -90,6 +91,10 @@ export class MiningSession extends EventEmitter {
   private generationId = 0;
   private monitorTimer: NodeJS.Timeout | null = null;
   private started = false;
+  private recentShares = new Set<string>();
+  private recentShareQueue: string[] = [];
+  private validationsInFlight = 0;
+  private invalidLocalShares = 0;
 
   private userAccepted = 0;
   private userRejected = 0;
@@ -103,6 +108,10 @@ export class MiningSession extends EventEmitter {
     this.mode = getModeAt(Date.now());
     this.activeJob = null;
     this.generationId = 0;
+    this.recentShares.clear();
+    this.recentShareQueue.length = 0;
+    this.validationsInFlight = 0;
+    this.invalidLocalShares = 0;
     this.userAccepted = 0;
     this.userRejected = 0;
     this.devAccepted = 0;
@@ -131,7 +140,7 @@ export class MiningSession extends EventEmitter {
     this.monitorTimer = setInterval(() => this.refreshMode(false), 1_000);
   }
 
-  submit(payload: {
+  async submit(payload: {
     jobId: string;
     extranonce2: string;
     ntime: string;
@@ -156,10 +165,102 @@ export class MiningSession extends EventEmitter {
       throw new Error("ntime does not match the active job.");
     }
 
+    if (!/^[0-9a-fA-F]{8}$/.test(payload.nonceHex)) {
+      throw new Error("nonce must be 4-byte hex");
+    }
+
+    const shareKey = [
+      payload.mode,
+      payload.generationId,
+      payload.jobId,
+      payload.extranonce2.toLowerCase(),
+      payload.ntime.toLowerCase(),
+      payload.nonceHex.toLowerCase()
+    ].join(":");
+
+    if (this.recentShares.has(shareKey)) {
+      throw new Error("Duplicate share.");
+    }
+
+    this.recentShares.add(shareKey);
+    this.recentShareQueue.push(shareKey);
+
+    if (this.recentShareQueue.length > 2048) {
+      const oldest = this.recentShareQueue.shift();
+      if (oldest) this.recentShares.delete(oldest);
+    }
+
+    const activeJob = this.activeJob;
+
+    if (this.validationsInFlight >= 4) {
+      throw new Error("Too many pending share validations.");
+    }
+
+    this.validationsInFlight += 1;
+
+    let valid: boolean;
+    try {
+      valid = await validateYespowerShare(
+        activeJob.header76Hex,
+        activeJob.targetHex,
+        payload.nonceHex
+      );
+    } catch (error) {
+      this.recentShares.delete(shareKey);
+      const queueIndex = this.recentShareQueue.indexOf(shareKey);
+      if (queueIndex >= 0) this.recentShareQueue.splice(queueIndex, 1);
+      throw error;
+    } finally {
+      this.validationsInFlight = Math.max(0, this.validationsInFlight - 1);
+    }
+
+    /*
+     * Validation is asynchronous. The mode/job may have changed while the
+     * native helper was hashing, so check generation again before forwarding.
+     */
+    if (
+      !this.started ||
+      this.mode !== payload.mode ||
+      this.activeJob?.generationId !== payload.generationId ||
+      this.activeJob?.jobId !== payload.jobId
+    ) {
+      throw new Error("Stale job generation after local validation.");
+    }
+
+    if (!valid) {
+      this.invalidLocalShares += 1;
+
+      if (payload.mode === "user") this.userRejected += 1;
+      else this.devRejected += 1;
+
+      this.emit("shareResult", {
+        id: null,
+        mode: payload.mode,
+        accepted: false,
+        local: true,
+        error: "Invalid proof of work.",
+        shares: {
+          user: { accepted: this.userAccepted, rejected: this.userRejected },
+          dev: { accepted: this.devAccepted, rejected: this.devRejected }
+        }
+      });
+
+      if (this.invalidLocalShares >= 5) {
+        this.emit("abuse", "Too many invalid proof-of-work submissions.");
+      }
+
+      return null;
+    }
+
     const upstream = payload.mode === "user" ? this.userUpstream : this.devUpstream;
     if (!upstream) throw new Error(`No upstream connection for ${payload.mode} mode.`);
 
-    return upstream.submit(payload.jobId, payload.extranonce2, payload.ntime, payload.nonceHex);
+    return upstream.submit(
+      payload.jobId,
+      payload.extranonce2,
+      payload.ntime,
+      payload.nonceHex
+    );
   }
 
   close() {

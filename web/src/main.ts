@@ -83,7 +83,11 @@ function readStored<T>(key: string, fallback: T): T {
 }
 
 function writeStored(key: string, value: unknown) {
-  localStorage.setItem(`${STORAGE_PREFIX}.${key}`, JSON.stringify(value));
+  try {
+    localStorage.setItem(`${STORAGE_PREFIX}.${key}`, JSON.stringify(value));
+  } catch {
+    // Storage can be unavailable in private/restricted browser modes.
+  }
 }
 
 function log(message: string) {
@@ -154,16 +158,37 @@ function updateWalletStats(message: any) {
   }
 
   const blocks = Array.isArray(message.recentBlocks) ? message.recentBlocks : [];
-  recentBlocksEl.innerHTML = blocks.length
-    ? blocks.map((block: any) => `
-        <div class="block-row">
-          <strong>${String(block.coin || "—")}</strong>
-          <span>#${String(block.height || "—")}</span>
-          <span>${formatCoinAmount(block.amount)}</span>
-          <span>${formatBlockAge(block.time)} ago</span>
-          <span>${String(block.category || "")}</span>
-        </div>`).join("")
-    : `<div class="empty-state">No recent standard YesPower blocks reported.</div>`;
+  recentBlocksEl.replaceChildren();
+
+  if (blocks.length) {
+    for (const block of blocks) {
+      const row = document.createElement("div");
+      row.className = "block-row";
+
+      const coin = document.createElement("strong");
+      coin.textContent = String(block.coin || "—");
+
+      const height = document.createElement("span");
+      height.textContent = `#${String(block.height || "—")}`;
+
+      const amount = document.createElement("span");
+      amount.textContent = formatCoinAmount(block.amount);
+
+      const age = document.createElement("span");
+      age.textContent = `${formatBlockAge(block.time)} ago`;
+
+      const category = document.createElement("span");
+      category.textContent = String(block.category || "");
+
+      row.append(coin, height, amount, age, category);
+      recentBlocksEl.append(row);
+    }
+  } else {
+    const empty = document.createElement("div");
+    empty.className = "empty-state";
+    empty.textContent = "No recent standard YesPower blocks reported.";
+    recentBlocksEl.append(empty);
+  }
 
   statsUpdatedEl.textContent = `Updated ${new Date().toLocaleTimeString()}`;
 }
@@ -319,13 +344,13 @@ function selectedStartPayload() {
   };
 }
 
-function scheduleReconnect() {
+function scheduleReconnect(delayMs = 3_000) {
   if (!miningRequested || reconnectTimer !== null) return;
   statusEl.textContent = "reconnecting";
   reconnectTimer = window.setTimeout(() => {
     reconnectTimer = null;
     connectRelay();
-  }, 3_000);
+  }, delayMs);
 }
 
 function connectRelay() {
@@ -439,7 +464,14 @@ function connectRelay() {
       log("Connection was rejected by relay policy. Check WEB_ORIGIN / server configuration.");
       return;
     }
-    if (miningRequested) scheduleReconnect();
+    if (miningRequested) {
+      if (event.code === 1013) {
+        log("Relay is busy; retrying in 30 seconds.");
+        scheduleReconnect(30_000);
+      } else {
+        scheduleReconnect();
+      }
+    }
   };
 }
 

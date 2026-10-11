@@ -1,3 +1,0 @@
-[submodule "vendor/yespower"]
-	path = vendor/yespower
-	url = https://github.com/openwall/yespower.git

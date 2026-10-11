@@ -6,3 +6,4 @@ dist/
 web/public/wasm/yespower.js
 web/public/wasm/yespower.wasm
 web/src/generated/
+native/yespower-validator
