@@ -33,6 +33,43 @@ int yp_hash(const uint8_t *input, size_t input_len, uint8_t *output32) {
     return 0;
 }
 
+
+/*
+ * Generic YesPower 1.0 entry point for future algorithm switching.
+ * yp_hash() above remains untouched and continues to be the proven
+ * standard YesPower N=2048/r=32/no-personalization path.
+ */
+int yp_hash_params(
+    const uint8_t *input,
+    size_t input_len,
+    uint8_t *output32,
+    uint32_t N,
+    uint32_t r,
+    const uint8_t *pers,
+    size_t perslen
+) {
+    if (!g_ready && yp_init() != 0) return -1;
+    if (N == 0 || r == 0) return -2;
+
+    yespower_params_t params = {
+        .version = YESPOWER_1_0,
+        .N = N,
+        .r = r,
+        .pers = perslen ? pers : NULL,
+        .perslen = perslen
+    };
+
+    yespower_binary_t out;
+
+    if (yespower(&g_local, input, input_len, &params, &out) != 0)
+        return -1;
+
+    for (int i = 0; i < 32; i++)
+        output32[i] = out.uc[i];
+
+    return 0;
+}
+
 void yp_free(void) {
     if (g_ready) {
         yespower_free_local(&g_local);
