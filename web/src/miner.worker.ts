@@ -1,6 +1,12 @@
-import { getNextWorkerNonce, getWorkerNonceStart } from "./nonce.js";
+import {
+  getNextWorkerNonce,
+  getWorkerNonceStart
+} from "./nonce.js";
 
-type MiningMode = "user" | "beneficiary" | "dev";
+type MiningMode =
+  | "user"
+  | "beneficiary"
+  | "dev";
 
 type Job = {
   jobId: string;
@@ -12,6 +18,14 @@ type Job = {
   generationId: number;
 };
 
+type BenchmarkAlgorithm = {
+  id: string;
+  displayName: string;
+  N: number;
+  r: number;
+  personalization: string | null;
+};
+
 type WorkerMessage =
   | {
       type: "job";
@@ -20,43 +34,105 @@ type WorkerMessage =
       workerCount: number;
       nonceSeed: number;
     }
-  | { type: "stop" };
+  | {
+      type: "benchmark";
+      algorithms: BenchmarkAlgorithm[];
+      durationMs: number;
+    }
+  | {
+      type: "stop";
+    };
 
 let currentToken = 0;
 
-function hexToBytes(hex: string): Uint8Array {
-  if (hex.length % 2) throw new Error("odd hex");
-  const out = new Uint8Array(hex.length / 2);
-  for (let i = 0; i < out.length; i++) out[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+function hexToBytes(
+  hex: string
+): Uint8Array {
+  if (hex.length % 2) {
+    throw new Error("odd hex");
+  }
+
+  const out =
+    new Uint8Array(hex.length / 2);
+
+  for (
+    let i = 0;
+    i < out.length;
+    i++
+  ) {
+    out[i] =
+      parseInt(
+        hex.slice(
+          i * 2,
+          i * 2 + 2
+        ),
+        16
+      );
+  }
+
   return out;
 }
 
-function bytesToHex(bytes: Uint8Array): string {
-  return [...bytes].map((value) => value.toString(16).padStart(2, "0")).join("");
+function bytesToHex(
+  bytes: Uint8Array
+): string {
+  return [...bytes]
+    .map(
+      (value) =>
+        value
+          .toString(16)
+          .padStart(2, "0")
+    )
+    .join("");
 }
 
-// YesPower output and relay target are both compared as unsigned LE uint256 values.
-function le256LTE(a: Uint8Array, b: Uint8Array): boolean {
+function le256LTE(
+  a: Uint8Array,
+  b: Uint8Array
+): boolean {
   for (let i = 31; i >= 0; i--) {
     if (a[i] < b[i]) return true;
     if (a[i] > b[i]) return false;
   }
+
   return true;
 }
 
 let mod: any;
 
 async function loadWasm() {
-  const factory = (await import("./generated/yespower.mjs")).default;
+  const factory =
+    (
+      await import(
+        "./generated/yespower.mjs"
+      )
+    ).default;
+
   mod = await factory();
-  if (mod._yp_init() !== 0) throw new Error("yp_init failed");
-  postMessage({ type: "ready" });
+
+  if (mod._yp_init() !== 0) {
+    throw new Error(
+      "yp_init failed"
+    );
+  }
+
+  postMessage({
+    type: "ready"
+  });
 }
 
-const ready = loadWasm().catch((error) => {
-  postMessage({ type: "error", message: String(error?.stack ?? error) });
-  throw error;
-});
+const ready =
+  loadWasm().catch((error) => {
+    postMessage({
+      type: "error",
+      message:
+        String(
+          error?.stack ?? error
+        )
+    });
+
+    throw error;
+  });
 
 async function mine(
   job: Job,
@@ -66,65 +142,171 @@ async function mine(
   token: number
 ) {
   await ready;
-  if (!mod || token !== currentToken) return;
 
-  const prefix = hexToBytes(job.header76Hex);
-  const target = hexToBytes(job.targetHex);
-  if (prefix.length !== 76 || target.length !== 32) throw new Error("bad job size");
+  if (
+    !mod ||
+    token !== currentToken
+  ) {
+    return;
+  }
 
-  const inPtr = mod._malloc(80);
-  const outPtr = mod._malloc(32);
-  const header = new Uint8Array(80);
+  const prefix =
+    hexToBytes(job.header76Hex);
+
+  const target =
+    hexToBytes(job.targetHex);
+
+  if (
+    prefix.length !== 76 ||
+    target.length !== 32
+  ) {
+    throw new Error(
+      "bad job size"
+    );
+  }
+
+  const inPtr =
+    mod._malloc(80);
+
+  const outPtr =
+    mod._malloc(32);
+
+  const header =
+    new Uint8Array(80);
+
   header.set(prefix, 0);
 
-  let nonce = getWorkerNonceStart(nonceSeed, workerIndex, workerCount);
+  let nonce =
+    getWorkerNonceStart(
+      nonceSeed,
+      workerIndex,
+      workerCount
+    );
+
   let hashes = 0;
-  let sampleStart = performance.now();
+  let sampleStart =
+    performance.now();
 
   try {
-    while (token === currentToken) {
-      // Preserve the nonce byte order proven by the v0.1 accepted-share path:
-      // native uint32 little-endian in the 80-byte YesPower header.
-      header[76] = nonce & 0xff;
-      header[77] = (nonce >>> 8) & 0xff;
-      header[78] = (nonce >>> 16) & 0xff;
-      header[79] = (nonce >>> 24) & 0xff;
+    while (
+      token === currentToken
+    ) {
+      /*
+       * DO NOT CHANGE.
+       *
+       * Proven v0.1 nonce byte order.
+       */
+      header[76] =
+        nonce & 0xff;
 
-      mod.HEAPU8.set(header, inPtr);
-      const rc = mod._yp_hash(inPtr, 80, outPtr);
-      if (rc !== 0) throw new Error(`yp_hash rc=${rc}`);
+      header[77] =
+        (nonce >>> 8) & 0xff;
 
-      const hash = new Uint8Array(mod.HEAPU8.slice(outPtr, outPtr + 32));
+      header[78] =
+        (nonce >>> 16) & 0xff;
+
+      header[79] =
+        (nonce >>> 24) & 0xff;
+
+      mod.HEAPU8.set(
+        header,
+        inPtr
+      );
+
+      /*
+       * DO NOT CHANGE THIS PATH YET.
+       *
+       * Production standard YesPower mining keeps using the
+       * exact _yp_hash() path that has already produced
+       * accepted Zpool shares.
+       */
+      const rc =
+        mod._yp_hash(
+          inPtr,
+          80,
+          outPtr
+        );
+
+      if (rc !== 0) {
+        throw new Error(
+          `yp_hash rc=${rc}`
+        );
+      }
+
+      const hash =
+        new Uint8Array(
+          mod.HEAPU8.slice(
+            outPtr,
+            outPtr + 32
+          )
+        );
+
       hashes += 1;
 
-      if (le256LTE(hash, target)) {
+      if (
+        le256LTE(
+          hash,
+          target
+        )
+      ) {
         postMessage({
           type: "share",
           jobId: job.jobId,
-          extranonce2: job.extranonce2,
+          extranonce2:
+            job.extranonce2,
           ntime: job.ntime,
-          nonceHex: nonce.toString(16).padStart(8, "0"),
-          hashHex: bytesToHex(hash),
+          nonceHex:
+            nonce
+              .toString(16)
+              .padStart(8, "0"),
+          hashHex:
+            bytesToHex(hash),
           workerIndex,
           mode: job.mode,
-          generationId: job.generationId
+          generationId:
+            job.generationId
         });
       }
 
-      nonce = getNextWorkerNonce(nonce, workerIndex, workerCount);
+      nonce =
+        getNextWorkerNonce(
+          nonce,
+          workerIndex,
+          workerCount
+        );
 
-      if ((hashes & 31) === 0) {
-        const now = performance.now();
-        if (now - sampleStart >= 2_000) {
+      if (
+        (hashes & 31) === 0
+      ) {
+        const now =
+          performance.now();
+
+        if (
+          now - sampleStart >=
+          2_000
+        ) {
           postMessage({
             type: "hashrate",
             workerIndex,
-            hps: (hashes * 1000) / (now - sampleStart)
+            hps:
+              (hashes * 1000) /
+              (
+                now -
+                sampleStart
+              )
           });
+
           hashes = 0;
           sampleStart = now;
         }
-        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        await new Promise(
+          (resolve) =>
+            setTimeout(
+              resolve,
+              0
+            )
+        );
       }
     }
   } finally {
@@ -133,18 +315,327 @@ async function mine(
   }
 }
 
-self.onmessage = (ev: MessageEvent<WorkerMessage>) => {
-  if (ev.data?.type === "stop") {
-    currentToken += 1;
-    return;
-  }
+async function benchmark(
+  algorithms: BenchmarkAlgorithm[],
+  requestedDurationMs: number
+) {
+  await ready;
 
-  if (ev.data?.type === "job") {
-    currentToken += 1;
-    const token = currentToken;
-    const { job, workerIndex, workerCount, nonceSeed } = ev.data;
-    mine(job, workerIndex, workerCount, nonceSeed, token).catch((error) =>
-      postMessage({ type: "error", workerIndex, message: String(error?.stack ?? error) })
+  if (!mod) {
+    throw new Error(
+      "WASM not loaded"
     );
   }
-};
+
+  if (
+    typeof mod._yp_hash_params !==
+    "function"
+  ) {
+    throw new Error(
+      "yp_hash_params is not exported"
+    );
+  }
+
+  const durationMs =
+    Math.max(
+      250,
+      Math.min(
+        1500,
+        Number(
+          requestedDurationMs ||
+          450
+        )
+      )
+    );
+
+  const inPtr =
+    mod._malloc(80);
+
+  const outPtr =
+    mod._malloc(32);
+
+  const input =
+    new Uint8Array(80);
+
+  /*
+   * Deterministic non-zero benchmark input.
+   */
+  for (
+    let i = 0;
+    i < input.length;
+    i++
+  ) {
+    input[i] =
+      (i * 17 + 29) & 0xff;
+  }
+
+  mod.HEAPU8.set(
+    input,
+    inPtr
+  );
+
+  const results:
+    Record<string, number> = {};
+
+  try {
+    /*
+     * First verify that generic YesPower with the standard
+     * parameters produces exactly the same 32-byte result
+     * as our proven _yp_hash() implementation.
+     */
+    const legacyOut =
+      mod._malloc(32);
+
+    const genericOut =
+      mod._malloc(32);
+
+    try {
+      if (
+        mod._yp_hash(
+          inPtr,
+          80,
+          legacyOut
+        ) !== 0
+      ) {
+        throw new Error(
+          "legacy benchmark parity hash failed"
+        );
+      }
+
+      if (
+        mod._yp_hash_params(
+          inPtr,
+          80,
+          genericOut,
+          2048,
+          32,
+          0,
+          0
+        ) !== 0
+      ) {
+        throw new Error(
+          "generic benchmark parity hash failed"
+        );
+      }
+
+      const a =
+        bytesToHex(
+          new Uint8Array(
+            mod.HEAPU8.slice(
+              legacyOut,
+              legacyOut + 32
+            )
+          )
+        );
+
+      const b =
+        bytesToHex(
+          new Uint8Array(
+            mod.HEAPU8.slice(
+              genericOut,
+              genericOut + 32
+            )
+          )
+        );
+
+      if (a !== b) {
+        throw new Error(
+          "generic YesPower parity mismatch"
+        );
+      }
+    } finally {
+      mod._free(legacyOut);
+      mod._free(genericOut);
+    }
+
+    const encoder =
+      new TextEncoder();
+
+    for (
+      const algo of algorithms
+    ) {
+      let persPtr = 0;
+      let persLen = 0;
+
+      try {
+        if (
+          algo.personalization
+        ) {
+          const bytes =
+            encoder.encode(
+              algo.personalization
+            );
+
+          persLen =
+            bytes.length;
+
+          persPtr =
+            mod._malloc(
+              Math.max(
+                1,
+                persLen
+              )
+            );
+
+          mod.HEAPU8.set(
+            bytes,
+            persPtr
+          );
+        }
+
+        /*
+         * Warm-up.
+         */
+        const warmup =
+          mod._yp_hash_params(
+            inPtr,
+            80,
+            outPtr,
+            algo.N,
+            algo.r,
+            persPtr,
+            persLen
+          );
+
+        if (warmup !== 0) {
+          throw new Error(
+            `${algo.id} warmup rc=${warmup}`
+          );
+        }
+
+        const started =
+          performance.now();
+
+        let count = 0;
+
+        while (
+          performance.now() -
+            started <
+          durationMs
+        ) {
+          const rc =
+            mod._yp_hash_params(
+              inPtr,
+              80,
+              outPtr,
+              algo.N,
+              algo.r,
+              persPtr,
+              persLen
+            );
+
+          if (rc !== 0) {
+            throw new Error(
+              `${algo.id} rc=${rc}`
+            );
+          }
+
+          count += 1;
+        }
+
+        const elapsed =
+          performance.now() -
+          started;
+
+        results[algo.id] =
+          elapsed > 0
+            ? (
+                count * 1000
+              ) / elapsed
+            : 0;
+      } finally {
+        if (persPtr) {
+          mod._free(persPtr);
+        }
+      }
+
+      /*
+       * Yield between variants.
+       */
+      await new Promise(
+        (resolve) =>
+          setTimeout(
+            resolve,
+            0
+          )
+      );
+    }
+  } finally {
+    mod._free(inPtr);
+    mod._free(outPtr);
+  }
+
+  postMessage({
+    type:
+      "benchmark_result",
+    results
+  });
+}
+
+self.onmessage =
+  (
+    ev:
+      MessageEvent<WorkerMessage>
+  ) => {
+    if (
+      ev.data?.type === "stop"
+    ) {
+      currentToken += 1;
+      return;
+    }
+
+    if (
+      ev.data?.type ===
+      "benchmark"
+    ) {
+      benchmark(
+        ev.data.algorithms,
+        ev.data.durationMs
+      ).catch((error) =>
+        postMessage({
+          type: "error",
+          message:
+            String(
+              error?.stack ??
+              error
+            )
+        })
+      );
+
+      return;
+    }
+
+    if (
+      ev.data?.type === "job"
+    ) {
+      currentToken += 1;
+
+      const token =
+        currentToken;
+
+      const {
+        job,
+        workerIndex,
+        workerCount,
+        nonceSeed
+      } = ev.data;
+
+      mine(
+        job,
+        workerIndex,
+        workerCount,
+        nonceSeed,
+        token
+      ).catch((error) =>
+        postMessage({
+          type: "error",
+          workerIndex,
+          message:
+            String(
+              error?.stack ??
+              error
+            )
+        })
+      );
+    }
+  };
