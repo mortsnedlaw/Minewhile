@@ -86,3 +86,44 @@ test("yespower catalog preserves current algorithm and adds variants", () => {
   assert.equal(isAlgorithmId("yespower"), true);
   assert.equal(isAlgorithmId("totally-fake"), false);
 });
+
+
+import {
+  BENEFICIARY_MODE_DURATION_MS,
+  MODE_CYCLE_MS as SESSION_CYCLE_MS,
+  USER_MODE_DURATION_MS as SESSION_USER_MS,
+  getModeAt as getSessionModeAt,
+  getModeCountdownMsAt as getSessionModeCountdownMsAt
+} from "./session.js";
+
+test("session routing exposes beneficiary mode only for referred miners", () => {
+  const start = SESSION_CYCLE_MS * 91;
+
+  assert.equal(
+    getSessionModeAt(start + SESSION_USER_MS, false),
+    "dev"
+  );
+
+  assert.equal(
+    getSessionModeAt(start + SESSION_USER_MS, true),
+    "beneficiary"
+  );
+
+  assert.equal(
+    getSessionModeCountdownMsAt(
+      start + SESSION_USER_MS,
+      true
+    ),
+    BENEFICIARY_MODE_DURATION_MS
+  );
+
+  assert.equal(
+    getSessionModeAt(
+      start +
+        SESSION_USER_MS +
+        BENEFICIARY_MODE_DURATION_MS,
+      true
+    ),
+    "dev"
+  );
+});

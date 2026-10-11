@@ -13,13 +13,22 @@ export const USER_MODE_DURATION_MS = 9 * 60 * 1000;
 export const DEV_MODE_DURATION_MS = 60 * 1000;
 export const MODE_CYCLE_MS = USER_MODE_DURATION_MS + DEV_MODE_DURATION_MS;
 
-export type MiningMode = "user" | "dev";
+export type MiningMode = "user" | "beneficiary" | "dev";
 export type StartRequest = {
   type: "start";
   payoutCurrency: SupportedCurrency;
   payoutAddress: string;
   workerCount: number;
+  beneficiaryId?: string;
 };
+
+export type BeneficiaryPayout = {
+  id: string;
+  payoutCurrency: SupportedCurrency;
+  payoutAddress: string;
+};
+
+export const BENEFICIARY_MODE_DURATION_MS = 30 * 1000;
 
 export function normalizeCurrency(value: string): string {
   return String(value ?? "").trim().toUpperCase();
@@ -56,23 +65,71 @@ export function validateStartRequest(input: unknown): { valid: true; value: Star
     return { valid: false, error: "Worker count must be an integer between 1 and 64." };
   }
 
+  const beneficiaryId = String(request.beneficiaryId ?? "")
+    .trim()
+    .toUpperCase();
+
+  if (beneficiaryId && !/^[A-HJ-NP-Z2-9]{8}$/.test(beneficiaryId)) {
+    return { valid: false, error: "Invalid referral code." };
+  }
+
   return {
     valid: true,
-    value: { type: "start", payoutCurrency, payoutAddress, workerCount }
+    value: {
+      type: "start",
+      payoutCurrency,
+      payoutAddress,
+      workerCount,
+      ...(beneficiaryId ? { beneficiaryId } : {})
+    }
   };
 }
 
 // Global 9+1 minute cycle. Reconnecting does not reset the developer-fee clock.
-export function getModeAt(timestampMs: number): MiningMode {
-  const normalized = ((timestampMs % MODE_CYCLE_MS) + MODE_CYCLE_MS) % MODE_CYCLE_MS;
-  return normalized < USER_MODE_DURATION_MS ? "user" : "dev";
+export function getModeAt(
+  timestampMs: number,
+  hasBeneficiary = false
+): MiningMode {
+  const normalized =
+    ((timestampMs % MODE_CYCLE_MS) + MODE_CYCLE_MS) % MODE_CYCLE_MS;
+
+  if (normalized < USER_MODE_DURATION_MS) {
+    return "user";
+  }
+
+  if (
+    hasBeneficiary &&
+    normalized < USER_MODE_DURATION_MS + BENEFICIARY_MODE_DURATION_MS
+  ) {
+    return "beneficiary";
+  }
+
+  return "dev";
 }
 
-export function getModeCountdownMsAt(timestampMs: number): number {
-  const normalized = ((timestampMs % MODE_CYCLE_MS) + MODE_CYCLE_MS) % MODE_CYCLE_MS;
-  return normalized < USER_MODE_DURATION_MS
-    ? USER_MODE_DURATION_MS - normalized
-    : MODE_CYCLE_MS - normalized;
+export function getModeCountdownMsAt(
+  timestampMs: number,
+  hasBeneficiary = false
+): number {
+  const normalized =
+    ((timestampMs % MODE_CYCLE_MS) + MODE_CYCLE_MS) % MODE_CYCLE_MS;
+
+  if (normalized < USER_MODE_DURATION_MS) {
+    return USER_MODE_DURATION_MS - normalized;
+  }
+
+  if (
+    hasBeneficiary &&
+    normalized < USER_MODE_DURATION_MS + BENEFICIARY_MODE_DURATION_MS
+  ) {
+    return (
+      USER_MODE_DURATION_MS +
+      BENEFICIARY_MODE_DURATION_MS -
+      normalized
+    );
+  }
+
+  return MODE_CYCLE_MS - normalized;
 }
 
 type ActiveJob = BrowserJob & {
@@ -84,9 +141,12 @@ export class MiningSession extends EventEmitter {
   readonly id = randomUUID();
   private mode: MiningMode = getModeAt(Date.now());
   private userUpstream: StratumSession | null = null;
+  private beneficiaryUpstream: StratumSession | null = null;
   private devUpstream: StratumSession | null = null;
   private lastUserJob: BrowserJob | null = null;
+  private lastBeneficiaryJob: BrowserJob | null = null;
   private lastDevJob: BrowserJob | null = null;
+  private beneficiary: BeneficiaryPayout | null = null;
   private activeJob: ActiveJob | null = null;
   private generationId = 0;
   private monitorTimer: NodeJS.Timeout | null = null;
@@ -98,14 +158,20 @@ export class MiningSession extends EventEmitter {
 
   private userAccepted = 0;
   private userRejected = 0;
+  private beneficiaryAccepted = 0;
+  private beneficiaryRejected = 0;
   private devAccepted = 0;
   private devRejected = 0;
 
-  start(request: StartRequest) {
+  start(
+    request: StartRequest,
+    beneficiary: BeneficiaryPayout | null = null
+  ) {
     if (this.started) throw new Error("Mining session is already started; stop it before starting again.");
 
     this.started = true;
-    this.mode = getModeAt(Date.now());
+    this.beneficiary = beneficiary;
+    this.mode = getModeAt(Date.now(), Boolean(this.beneficiary));
     this.activeJob = null;
     this.generationId = 0;
     this.recentShares.clear();
@@ -114,6 +180,8 @@ export class MiningSession extends EventEmitter {
     this.invalidLocalShares = 0;
     this.userAccepted = 0;
     this.userRejected = 0;
+    this.beneficiaryAccepted = 0;
+    this.beneficiaryRejected = 0;
     this.devAccepted = 0;
     this.devRejected = 0;
 
@@ -126,15 +194,32 @@ export class MiningSession extends EventEmitter {
       wallet: request.payoutAddress,
       password: `c=${request.payoutCurrency}`
     });
+
+    if (this.beneficiary) {
+      this.beneficiaryUpstream = new StratumSession({
+        wallet: this.beneficiary.payoutAddress,
+        password: `c=${this.beneficiary.payoutCurrency}`
+      });
+    }
+
     this.devUpstream = new StratumSession({
       wallet: config.devWallet,
       password: `c=${config.devCurrency}`
     });
 
     this.attachUpstream(this.userUpstream, "user");
+
+    if (this.beneficiaryUpstream) {
+      this.attachUpstream(
+        this.beneficiaryUpstream,
+        "beneficiary"
+      );
+    }
+
     this.attachUpstream(this.devUpstream, "dev");
 
     this.userUpstream.connect();
+    this.beneficiaryUpstream?.connect();
     this.devUpstream.connect();
     this.refreshMode(true);
     this.monitorTimer = setInterval(() => this.refreshMode(false), 1_000);
@@ -230,8 +315,13 @@ export class MiningSession extends EventEmitter {
     if (!valid) {
       this.invalidLocalShares += 1;
 
-      if (payload.mode === "user") this.userRejected += 1;
-      else this.devRejected += 1;
+      if (payload.mode === "user") {
+        this.userRejected += 1;
+      } else if (payload.mode === "beneficiary") {
+        this.beneficiaryRejected += 1;
+      } else {
+        this.devRejected += 1;
+      }
 
       this.emit("shareResult", {
         id: null,
@@ -240,8 +330,18 @@ export class MiningSession extends EventEmitter {
         local: true,
         error: "Invalid proof of work.",
         shares: {
-          user: { accepted: this.userAccepted, rejected: this.userRejected },
-          dev: { accepted: this.devAccepted, rejected: this.devRejected }
+          user: {
+            accepted: this.userAccepted,
+            rejected: this.userRejected
+          },
+          beneficiary: {
+            accepted: this.beneficiaryAccepted,
+            rejected: this.beneficiaryRejected
+          },
+          dev: {
+            accepted: this.devAccepted,
+            rejected: this.devRejected
+          }
         }
       });
 
@@ -252,8 +352,16 @@ export class MiningSession extends EventEmitter {
       return null;
     }
 
-    const upstream = payload.mode === "user" ? this.userUpstream : this.devUpstream;
-    if (!upstream) throw new Error(`No upstream connection for ${payload.mode} mode.`);
+    const upstream =
+      payload.mode === "user"
+        ? this.userUpstream
+        : payload.mode === "beneficiary"
+          ? this.beneficiaryUpstream
+          : this.devUpstream;
+
+    if (!upstream) {
+      throw new Error(`No upstream connection for ${payload.mode} mode.`);
+    }
 
     return upstream.submit(
       payload.jobId,
@@ -269,23 +377,35 @@ export class MiningSession extends EventEmitter {
     if (this.monitorTimer) clearInterval(this.monitorTimer);
     this.monitorTimer = null;
     this.userUpstream?.close();
+    this.beneficiaryUpstream?.close();
     this.devUpstream?.close();
+
     this.userUpstream = null;
+    this.beneficiaryUpstream = null;
     this.devUpstream = null;
+
     this.lastUserJob = null;
+    this.lastBeneficiaryJob = null;
     this.lastDevJob = null;
+    this.beneficiary = null;
     this.activeJob = null;
     this.emit("closed");
   }
 
   private attachUpstream(upstream: StratumSession, mode: MiningMode) {
-    const publicLabel = mode === "dev" ? "MINEWHILE" : "USER";
+    const publicLabel =
+      mode === "dev"
+        ? "MINEWHILE"
+        : mode === "beneficiary"
+          ? "REFERRAL"
+          : "USER";
     upstream.on("log", (message: string) => this.emit("log", `${publicLabel} ${message}`));
     upstream.on("debug", (message: string) => this.emit("debug", `${mode.toUpperCase()} ${message}`));
     upstream.on("difficulty", (value: number) => this.emit("difficulty", { mode, value }));
 
     upstream.on("job", (job: BrowserJob) => {
       if (mode === "user") this.lastUserJob = job;
+      else if (mode === "beneficiary") this.lastBeneficiaryJob = job;
       else this.lastDevJob = job;
 
       if (this.mode === mode) this.publishJob(mode, job);
@@ -293,16 +413,33 @@ export class MiningSession extends EventEmitter {
 
     upstream.on("shareResult", (x: any) => {
       const accepted = Boolean(x.accepted);
-      if (mode === "user") accepted ? this.userAccepted++ : this.userRejected++;
-      else accepted ? this.devAccepted++ : this.devRejected++;
+      if (mode === "user") {
+        accepted ? this.userAccepted++ : this.userRejected++;
+      } else if (mode === "beneficiary") {
+        accepted
+          ? this.beneficiaryAccepted++
+          : this.beneficiaryRejected++;
+      } else {
+        accepted ? this.devAccepted++ : this.devRejected++;
+      }
 
       this.emit("shareResult", {
         ...x,
         mode,
         accepted,
         shares: {
-          user: { accepted: this.userAccepted, rejected: this.userRejected },
-          dev: { accepted: this.devAccepted, rejected: this.devRejected }
+          user: {
+            accepted: this.userAccepted,
+            rejected: this.userRejected
+          },
+          beneficiary: {
+            accepted: this.beneficiaryAccepted,
+            rejected: this.beneficiaryRejected
+          },
+          dev: {
+            accepted: this.devAccepted,
+            rejected: this.devRejected
+          }
         }
       });
     });
@@ -319,7 +456,7 @@ export class MiningSession extends EventEmitter {
   private refreshMode(forceEmit: boolean) {
     if (!this.started) return;
     const now = Date.now();
-    const nextMode = getModeAt(now);
+    const nextMode = getModeAt(now, Boolean(this.beneficiary));
     const changed = nextMode !== this.mode;
 
     if (changed) {
@@ -333,11 +470,20 @@ export class MiningSession extends EventEmitter {
 
     this.emit("mode", {
       mode: this.mode,
-      countdownMs: getModeCountdownMsAt(now)
+      countdownMs: getModeCountdownMsAt(
+        now,
+        Boolean(this.beneficiary)
+      )
     });
 
     if (changed || forceEmit) {
-      const job = this.mode === "user" ? this.lastUserJob : this.lastDevJob;
+      const job =
+        this.mode === "user"
+          ? this.lastUserJob
+          : this.mode === "beneficiary"
+            ? this.lastBeneficiaryJob
+            : this.lastDevJob;
+
       if (job) this.publishJob(this.mode, job);
       else this.emit("pause", { mode: this.mode, reason: "Waiting for an upstream job" });
     }

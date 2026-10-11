@@ -3,6 +3,7 @@ import { WebSocketServer, type RawData } from "ws";
 import { assertRuntimeConfig, config, isAllowedOrigin } from "./config.js";
 import { SlidingWindowRateLimiter } from "./rateLimit.js";
 import { getWalletStats } from "./poolStats.js";
+import { getBeneficiary } from "./beneficiary.js";
 import { MiningSession, validateStartRequest, type MiningMode } from "./session.js";
 
 assertRuntimeConfig();
@@ -157,13 +158,36 @@ wss.on("connection", (ws, req) => {
         return;
       }
       try {
-        session.start(check.value);
+        const beneficiary = check.value.beneficiaryId
+          ? getBeneficiary(check.value.beneficiaryId)
+          : null;
+
+        if (check.value.beneficiaryId && !beneficiary) {
+          send({
+            type: "error",
+            message: "Referral code was not found or is disabled."
+          });
+          return;
+        }
+
+        session.start(
+          check.value,
+          beneficiary
+            ? {
+                id: beneficiary.id,
+                payoutCurrency: beneficiary.payoutCurrency as any,
+                payoutAddress: beneficiary.payoutAddress
+              }
+            : null
+        );
+
         activeWallet = check.value.payoutAddress;
         send({
           type: "started",
           payoutCurrency: check.value.payoutCurrency,
           payoutAddress: check.value.payoutAddress,
-          workerCount: check.value.workerCount
+          workerCount: check.value.workerCount,
+          beneficiaryId: beneficiary?.id ?? null
         });
       } catch (error: any) {
         send({ type: "error", message: error?.message ?? String(error) });
@@ -198,7 +222,12 @@ wss.on("connection", (ws, req) => {
         return;
       }
       try {
-        const mode: MiningMode = message.mode === "dev" ? "dev" : "user";
+        const mode: MiningMode =
+          message.mode === "dev"
+            ? "dev"
+            : message.mode === "beneficiary"
+              ? "beneficiary"
+              : "user";
         void session.submit({
           jobId: String(message.jobId ?? ""),
           extranonce2: String(message.extranonce2 ?? ""),

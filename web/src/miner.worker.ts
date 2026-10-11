@@ -1,6 +1,6 @@
 import { getNextWorkerNonce, getWorkerNonceStart } from "./nonce.js";
 
-type MiningMode = "user" | "dev";
+type MiningMode = "user" | "beneficiary" | "dev";
 
 type Job = {
   jobId: string;

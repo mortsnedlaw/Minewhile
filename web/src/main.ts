@@ -11,7 +11,7 @@ const SUPPORTED_CURRENCIES = ["BTC", "LTC", "BCH", "DASH", "ADVC", "ARRR", "BC2"
 const GUARANTEED_CURRENCIES = new Set(["BTC", "LTC", "DASH", "DGB", "FLUX", "RVN"]);
 const STORAGE_PREFIX = "minewhile";
 
-type MiningMode = "user" | "dev";
+type MiningMode = "user" | "beneficiary" | "dev";
 type BrowserJob = {
   jobId: string;
   header76Hex: string;
@@ -88,6 +88,17 @@ function writeStored(key: string, value: unknown) {
   } catch {
     // Storage can be unavailable in private/restricted browser modes.
   }
+}
+
+function normalizeMiningMode(value: unknown): MiningMode {
+  if (value === "dev") return "dev";
+  if (value === "beneficiary") return "beneficiary";
+  return "user";
+}
+
+function normalizeReferralCode(value: unknown): string {
+  const code = String(value ?? "").trim().toUpperCase();
+  return /^[A-HJ-NP-Z2-9]{8}$/.test(code) ? code : "";
 }
 
 function log(message: string) {
@@ -217,7 +228,12 @@ function setConfigurationLocked(locked: boolean) {
 function setModeLabel(mode: MiningMode, countdownMs: number) {
   currentMode = mode;
   countdownDeadline = Date.now() + Math.max(0, countdownMs);
-  modeEl.textContent = mode === "dev" ? "Supporting Minewhile" : "User payout";
+  modeEl.textContent =
+    mode === "dev"
+      ? "Supporting Minewhile"
+      : mode === "beneficiary"
+        ? "Supporting referrer"
+        : "User payout";
   const difficulty = difficultyByMode.get(mode);
   difficultyEl.textContent = difficulty === undefined ? "—" : String(difficulty);
 }
@@ -340,7 +356,10 @@ function selectedStartPayload() {
     type: "start",
     payoutCurrency: currencyEl.value.toUpperCase(),
     payoutAddress: walletEl.value.trim(),
-    workerCount: Number(workerSlider.value)
+    workerCount: Number(workerSlider.value),
+    ...(activeBeneficiaryId
+      ? { beneficiaryId: activeBeneficiaryId }
+      : {})
   };
 }
 
@@ -392,14 +411,14 @@ function connectRelay() {
     }
 
     if (message.type === "mode") {
-      const mode: MiningMode = message.mode === "dev" ? "dev" : "user";
+      const mode = normalizeMiningMode(message.mode);
       if (currentJob && currentJob.mode !== mode) pauseWorkers();
       setModeLabel(mode, Number(message.countdownMs ?? 0));
       return;
     }
 
     if (message.type === "difficulty") {
-      const mode: MiningMode = message.mode === "dev" ? "dev" : "user";
+      const mode = normalizeMiningMode(message.mode);
       difficultyByMode.set(mode, Number(message.value));
       if (mode === currentMode) difficultyEl.textContent = String(message.value);
       return;
@@ -413,7 +432,7 @@ function connectRelay() {
         rejectedDev = Number(message.shares.dev?.rejected ?? rejectedDev);
       } else if (message.mode === "dev") {
         message.accepted ? acceptedDev++ : rejectedDev++;
-      } else {
+      } else if (message.mode === "user") {
         message.accepted ? acceptedUser++ : rejectedUser++;
       }
       updateShareCounts();
@@ -518,6 +537,30 @@ function stopMining() {
   setConfigurationLocked(false);
 }
 
+const referralFromUrl = normalizeReferralCode(
+  new URLSearchParams(location.search).get("r")
+);
+
+let activeBeneficiaryId = normalizeReferralCode(
+  readStored("beneficiaryId", "")
+);
+
+/*
+ * First-touch attribution: once a browser has a beneficiary, another
+ * referral link does not silently overwrite it. Clearing site data resets it.
+ */
+if (referralFromUrl && !activeBeneficiaryId) {
+  activeBeneficiaryId = referralFromUrl;
+  writeStored("beneficiaryId", activeBeneficiaryId);
+}
+
+/* Remove referral parameter after attribution to avoid leaking it in links. */
+if (new URLSearchParams(location.search).has("r")) {
+  const cleanUrl = new URL(location.href);
+  cleanUrl.searchParams.delete("r");
+  history.replaceState(null, "", cleanUrl.toString());
+}
+
 const detectedThreads = Math.max(1, navigator.hardwareConcurrency || 1);
 const maxWorkers = Math.max(1, Math.min(MAX_BROWSER_WORKERS, detectedThreads));
 const defaultWorkers = Math.max(1, Math.min(4, Math.floor(detectedThreads / 2) || 1));
@@ -572,3 +615,7 @@ updateWorkerDisplay();
 updateWorkerStatus();
 updateShareCounts();
 log("Minewhile ready — mining starts only when you press START.");
+
+if (activeBeneficiaryId) {
+  log(`Referral active: ${activeBeneficiaryId}`);
+}
