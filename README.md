@@ -1,4 +1,17 @@
-# Minewhile v0.2.0 — Multi-user browser YesPower miner
+# Minewhile v1.0.0 — Browser-native adaptive miner
+
+Minewhile is an explicit opt-in browser mining proof of concept using
+WebAssembly, Web Workers and a private Stratum relay.
+
+It can benchmark and verify multiple YesPower variants using real accepted
+shares, then automatically select among verified algorithms using measured
+browser performance, profitability and estimated network saturation.
+
+Normal mining payout:
+- Direct: 95% miner / 5% Minewhile
+- Referred: 95% miner / 3% referrer / 2% Minewhile
+
+Tune & Verify is a separate opt-in verification mode.
 
 Minewhile is an **explicit opt-in** browser miner for YesPower 1.0 (`N=2048`, `r=32`). The browser hashes in Web Workers using WebAssembly and talks to a small Node/TypeScript relay over WebSocket. The relay owns the upstream Stratum connection to Zpool.
 
