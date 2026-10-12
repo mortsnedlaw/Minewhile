@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
-  DEV_MODE_DURATION_MS,
+  BENEFICIARY_MODE_DURATION_MS,
   MODE_CYCLE_MS,
   USER_MODE_DURATION_MS,
   getModeAt,
@@ -36,16 +36,26 @@ test("uint256 comparison is little-endian, not lexicographic byte order", () => 
   assert.equal(sha256d(Buffer.from([1, 2, 3, 4])).length, 32);
 });
 
-test("global fee schedule is 9 minutes user + 1 minute dev and reconnect-independent", () => {
+test("global fee schedule is 95/5 direct and 95/3/2 with referral", () => {
   const cycleStart = MODE_CYCLE_MS * 12345;
-  assert.equal(USER_MODE_DURATION_MS, 9 * 60 * 1000);
-  assert.equal(DEV_MODE_DURATION_MS, 60 * 1000);
+  assert.equal(USER_MODE_DURATION_MS, 9 * 60 * 1000 + 30 * 1000);
+  assert.equal(BENEFICIARY_MODE_DURATION_MS, 18 * 1000);
+  assert.equal(MODE_CYCLE_MS, 10 * 60 * 1000);
+
+  // Direct miner: 570s user + 30s Minewhile.
   assert.equal(getModeAt(cycleStart), "user");
   assert.equal(getModeAt(cycleStart + USER_MODE_DURATION_MS - 1), "user");
   assert.equal(getModeAt(cycleStart + USER_MODE_DURATION_MS), "dev");
-  assert.equal(getModeAt(cycleStart + MODE_CYCLE_MS), "user");
   assert.equal(getModeCountdownMsAt(cycleStart), USER_MODE_DURATION_MS);
-  assert.equal(getModeCountdownMsAt(cycleStart + USER_MODE_DURATION_MS), DEV_MODE_DURATION_MS);
+  assert.equal(getModeCountdownMsAt(cycleStart + USER_MODE_DURATION_MS), 30 * 1000);
+
+  // Referred miner: 570s user + 18s referral + 12s Minewhile.
+  assert.equal(getModeAt(cycleStart + USER_MODE_DURATION_MS, true), "beneficiary");
+  assert.equal(getModeAt(cycleStart + USER_MODE_DURATION_MS + BENEFICIARY_MODE_DURATION_MS - 1, true), "beneficiary");
+  assert.equal(getModeAt(cycleStart + USER_MODE_DURATION_MS + BENEFICIARY_MODE_DURATION_MS, true), "dev");
+  assert.equal(getModeCountdownMsAt(cycleStart + USER_MODE_DURATION_MS, true), BENEFICIARY_MODE_DURATION_MS);
+  assert.equal(getModeCountdownMsAt(cycleStart + USER_MODE_DURATION_MS + BENEFICIARY_MODE_DURATION_MS, true), 12 * 1000);
+  assert.equal(getModeAt(cycleStart + MODE_CYCLE_MS, true), "user");
 });
 
 test("start validation rejects unsupported currencies and malformed data", () => {

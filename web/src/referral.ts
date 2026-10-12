@@ -1,19 +1,10 @@
-function getEl<T extends HTMLElement>(
-  selector: string
-): T {
+function getEl<T extends HTMLElement>(selector: string): T {
   const value = document.querySelector<T>(selector);
-
-  if (!value) {
-    throw new Error(`Missing referral UI element ${selector}`);
-  }
-
+  if (!value) throw new Error(`Missing referral UI element ${selector}`);
   return value;
 }
 
-async function copyValue(
-  input: HTMLInputElement,
-  status: HTMLElement
-) {
+async function copyValue(input: HTMLInputElement, status: HTMLElement) {
   try {
     if (navigator.clipboard && window.isSecureContext) {
       await navigator.clipboard.writeText(input.value);
@@ -23,7 +14,6 @@ async function copyValue(
       input.setSelectionRange(0, input.value.length);
       document.execCommand("copy");
     }
-
     status.textContent = "Copied.";
   } catch {
     status.textContent = "Could not copy automatically.";
@@ -32,199 +22,189 @@ async function copyValue(
 
 function createReferralUrl(id: string): string {
   const url = new URL(location.href);
-
   url.search = "";
   url.hash = "";
   url.searchParams.set("r", id);
-
   return url.toString();
 }
 
-function createManagementLink(
-  id: string,
-  secret: string
-): string {
+function createManagementLink(id: string, secret: string): string {
   const url = new URL(location.href);
-
   url.search = "";
-
-  /*
-   * Fragment is intentionally used so the management secret is not
-   * part of the normal HTTP request path or Referer header.
-   */
-  url.hash =
-    `manage=${encodeURIComponent(id)}.${encodeURIComponent(secret)}`;
-
+  url.hash = `manage=${encodeURIComponent(id)}.${encodeURIComponent(secret)}`;
   return url.toString();
 }
 
-export function initReferralCreator(
-  relayUrl: string
-) {
-  const currency =
-    getEl<HTMLSelectElement>("#referralCurrency");
+function oneShot(relayUrl: string, payload: unknown, onMessage: (message: any) => boolean, onError: (message: string) => void) {
+  const socket = new WebSocket(relayUrl);
+  const timer = window.setTimeout(() => {
+    try { socket.close(); } catch { /* ignore */ }
+    onError("Request timed out.");
+  }, 10_000);
 
-  const wallet =
-    getEl<HTMLInputElement>("#referralWallet");
+  socket.onopen = () => socket.send(JSON.stringify(payload));
+  socket.onmessage = (event) => {
+    let message: any;
+    try { message = JSON.parse(event.data); }
+    catch { return; }
+    if (onMessage(message)) {
+      window.clearTimeout(timer);
+      socket.close(1000, "done");
+    }
+  };
+  socket.onerror = () => {
+    window.clearTimeout(timer);
+    onError("Could not connect to Minewhile relay.");
+  };
+}
 
-  const create =
-    getEl<HTMLButtonElement>("#createReferral");
+export function initReferralCreator(relayUrl: string) {
+  const currency = getEl<HTMLSelectElement>("#referralCurrency");
+  const wallet = getEl<HTMLInputElement>("#referralWallet");
+  const create = getEl<HTMLButtonElement>("#createReferral");
+  const status = getEl<HTMLElement>("#referralCreateStatus");
+  const result = getEl<HTMLElement>("#referralCreateResult");
+  const referralLink = getEl<HTMLInputElement>("#createdReferralLink");
+  const managementLink = getEl<HTMLInputElement>("#createdManagementLink");
+  const managementSecret = getEl<HTMLInputElement>("#createdManagementSecret");
+  const copyReferral = getEl<HTMLButtonElement>("#copyReferralLink");
+  const copyManagement = getEl<HTMLButtonElement>("#copyManagementLink");
+  const copySecret = getEl<HTMLButtonElement>("#copyManagementSecret");
 
-  const status =
-    getEl<HTMLElement>("#referralCreateStatus");
+  const manageId = getEl<HTMLInputElement>("#manageReferralId");
+  const manageSecret = getEl<HTMLInputElement>("#manageReferralSecret");
+  const manageLoad = getEl<HTMLButtonElement>("#loadReferralManagement");
+  const managePanel = getEl<HTMLElement>("#referralManagementResult");
+  const manageCurrency = getEl<HTMLSelectElement>("#manageReferralCurrency");
+  const manageWallet = getEl<HTMLInputElement>("#manageReferralWallet");
+  const manageEnabled = getEl<HTMLInputElement>("#manageReferralEnabled");
+  const manageSave = getEl<HTMLButtonElement>("#saveReferralManagement");
+  const manageStatus = getEl<HTMLElement>("#referralManagementStatus");
+  const manageAccepted = getEl<HTMLElement>("#manageAcceptedShares");
+  const manageRejected = getEl<HTMLElement>("#manageRejectedShares");
+  const manageLastShare = getEl<HTMLElement>("#manageLastShare");
 
-  const result =
-    getEl<HTMLElement>("#referralCreateResult");
-
-  const referralLink =
-    getEl<HTMLInputElement>("#createdReferralLink");
-
-  const managementLink =
-    getEl<HTMLInputElement>("#createdManagementLink");
-
-  const managementSecret =
-    getEl<HTMLInputElement>("#createdManagementSecret");
-
-  const copyReferral =
-    getEl<HTMLButtonElement>("#copyReferralLink");
-
-  const copyManagement =
-    getEl<HTMLButtonElement>("#copyManagementLink");
-
-  const copySecret =
-    getEl<HTMLButtonElement>("#copyManagementSecret");
-
-  const mainCurrency =
-    document.querySelector<HTMLSelectElement>("#currency");
-
-  const mainWallet =
-    document.querySelector<HTMLInputElement>("#wallet");
-
+  const mainCurrency = document.querySelector<HTMLSelectElement>("#currency");
+  const mainWallet = document.querySelector<HTMLInputElement>("#wallet");
   if (mainCurrency) {
     currency.innerHTML = mainCurrency.innerHTML;
+    manageCurrency.innerHTML = mainCurrency.innerHTML;
     currency.value = mainCurrency.value;
   }
+  if (mainWallet?.value) wallet.value = mainWallet.value;
 
-  if (mainWallet?.value) {
-    wallet.value = mainWallet.value;
+  function loadManagement() {
+    const id = manageId.value.trim().toUpperCase();
+    const secret = manageSecret.value.trim();
+    if (!id || !secret) {
+      manageStatus.textContent = "Referral ID and management secret are required.";
+      return;
+    }
+    manageStatus.textContent = "Loading…";
+    oneShot(
+      relayUrl,
+      { type: "beneficiary_manage_get", beneficiaryId: id, managementSecret: secret },
+      (message) => {
+        if (message.type === "beneficiary_management") {
+          const b = message.beneficiary;
+          manageCurrency.value = String(b.payoutCurrency ?? "");
+          manageWallet.value = String(b.payoutAddress ?? "");
+          manageEnabled.checked = b.enabled !== false;
+          manageAccepted.textContent = String(b.acceptedShares ?? 0);
+          manageRejected.textContent = String(b.rejectedShares ?? 0);
+          manageLastShare.textContent = b.lastShareAt ? new Date(Number(b.lastShareAt)).toLocaleString() : "—";
+          managePanel.hidden = false;
+          manageStatus.textContent = `Managing referral ${String(b.id ?? id)}.`;
+          return true;
+        }
+        if (message.type === "error") {
+          manageStatus.textContent = String(message.message ?? "Could not load referral.");
+          return true;
+        }
+        return false;
+      },
+      (message) => manageStatus.textContent = message
+    );
   }
 
   create.onclick = () => {
-    const payoutCurrency =
-      currency.value.trim().toUpperCase();
-
-    const payoutAddress =
-      wallet.value.trim();
-
+    const payoutCurrency = currency.value.trim().toUpperCase();
+    const payoutAddress = wallet.value.trim();
     if (!payoutAddress) {
       status.textContent = "Enter a payout address.";
       return;
     }
-
     create.disabled = true;
     status.textContent = "Creating referral…";
     result.hidden = true;
 
-    const socket = new WebSocket(relayUrl);
-    let finished = false;
-
-    const finish = () => {
-      if (finished) return;
-
-      finished = true;
-      create.disabled = false;
-
-      if (socket.readyState === WebSocket.OPEN) {
-        socket.close(1000, "Referral creation completed");
+    oneShot(
+      relayUrl,
+      { type: "beneficiary_create", payoutCurrency, payoutAddress },
+      (message) => {
+        if (message.type === "beneficiary_created") {
+          const id = String(message.beneficiaryId ?? "");
+          const secret = String(message.managementSecret ?? "");
+          referralLink.value = createReferralUrl(id);
+          managementSecret.value = secret;
+          managementLink.value = createManagementLink(id, secret);
+          result.hidden = false;
+          status.textContent = `Referral ${id} created. Save the management link now.`;
+          manageId.value = id;
+          manageSecret.value = secret;
+          create.disabled = false;
+          return true;
+        }
+        if (message.type === "error") {
+          status.textContent = String(message.message ?? "Referral creation failed.");
+          create.disabled = false;
+          return true;
+        }
+        return false;
+      },
+      (message) => {
+        status.textContent = message;
+        create.disabled = false;
       }
-    };
-
-    const timeout = window.setTimeout(() => {
-      status.textContent = "Referral creation timed out.";
-
-      try {
-        socket.close();
-      } catch {
-        // ignore
-      }
-
-      finish();
-    }, 10_000);
-
-    socket.onopen = () => {
-      socket.send(JSON.stringify({
-        type: "beneficiary_create",
-        payoutCurrency,
-        payoutAddress
-      }));
-    };
-
-    socket.onmessage = (event) => {
-      let message: any;
-
-      try {
-        message = JSON.parse(event.data);
-      } catch {
-        return;
-      }
-
-      if (message.type === "beneficiary_created") {
-        window.clearTimeout(timeout);
-
-        const id = String(message.beneficiaryId ?? "");
-        const secret = String(message.managementSecret ?? "");
-
-        referralLink.value =
-          createReferralUrl(id);
-
-        managementSecret.value =
-          secret;
-
-        managementLink.value =
-          createManagementLink(id, secret);
-
-        result.hidden = false;
-
-        status.textContent =
-          `Referral ${id} created. Save the management secret/link now.`;
-
-        finish();
-        return;
-      }
-
-      if (message.type === "error") {
-        window.clearTimeout(timeout);
-
-        status.textContent =
-          String(message.message ?? "Referral creation failed.");
-
-        finish();
-      }
-    };
-
-    socket.onerror = () => {
-      window.clearTimeout(timeout);
-      status.textContent = "Could not connect to Minewhile relay.";
-      finish();
-    };
-
-    socket.onclose = () => {
-      window.clearTimeout(timeout);
-
-      if (!finished) {
-        status.textContent = "Referral connection closed.";
-      }
-
-      finish();
-    };
+    );
   };
 
-  copyReferral.onclick = () =>
-    void copyValue(referralLink, status);
+  copyReferral.onclick = () => void copyValue(referralLink, status);
+  copyManagement.onclick = () => void copyValue(managementLink, status);
+  copySecret.onclick = () => void copyValue(managementSecret, status);
+  manageLoad.onclick = loadManagement;
 
-  copyManagement.onclick = () =>
-    void copyValue(managementLink, status);
+  manageSave.onclick = () => {
+    manageStatus.textContent = "Saving…";
+    oneShot(
+      relayUrl,
+      {
+        type: "beneficiary_manage_update",
+        beneficiaryId: manageId.value.trim().toUpperCase(),
+        managementSecret: manageSecret.value.trim(),
+        payoutCurrency: manageCurrency.value,
+        payoutAddress: manageWallet.value.trim(),
+        enabled: manageEnabled.checked
+      },
+      (message) => {
+        if (message.type === "beneficiary_management") {
+          manageStatus.textContent = "Referral settings saved.";
+          return true;
+        }
+        if (message.type === "error") {
+          manageStatus.textContent = String(message.message ?? "Could not save referral.");
+          return true;
+        }
+        return false;
+      },
+      (message) => manageStatus.textContent = message
+    );
+  };
 
-  copySecret.onclick = () =>
-    void copyValue(managementSecret, status);
+  const match = location.hash.match(/^#manage=([A-HJ-NP-Z2-9]{8})\.([^\s]+)$/i);
+  if (match) {
+    manageId.value = decodeURIComponent(match[1]).toUpperCase();
+    manageSecret.value = decodeURIComponent(match[2]);
+    window.setTimeout(loadManagement, 0);
+  }
 }

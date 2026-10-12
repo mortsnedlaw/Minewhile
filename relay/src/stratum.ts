@@ -2,9 +2,15 @@ import net from "node:net";
 import { EventEmitter } from "node:events";
 import { config } from "./config.js";
 import { buildBrowserJob, type NotifyJob, type BrowserJob } from "./work.js";
+import type { AlgorithmId } from "./algorithms.js";
+import type { AlgorithmEndpoint } from "./algoScheduler.js";
 
 type Rpc = { id?: number | null; method?: string; params?: any[]; result?: any; error?: any };
-type StratumIdentity = { wallet: string; password: string };
+export type StratumIdentity = {
+  wallet: string;
+  password: string;
+  endpoint?: AlgorithmEndpoint;
+};
 
 const RECONNECT_DELAYS_MS = [1_000, 2_000, 5_000, 10_000, 30_000];
 const MAX_STRATUM_LINE_BYTES = 1_048_576;
@@ -21,15 +27,20 @@ export class StratumSession extends EventEmitter {
   private authorizeId = 0;
   private identity: StratumIdentity;
   private authorized = false;
-
   private extranonce1 = "";
   private extranonce2Size = 0;
   private extranonce2Counter = 0n;
   private difficulty = 1;
+  readonly algorithmId: AlgorithmId;
+  readonly host: string;
+  readonly port: number;
 
   constructor(identity: StratumIdentity) {
     super();
     this.identity = identity;
+    this.algorithmId = identity.endpoint?.id ?? "yespower";
+    this.host = identity.endpoint?.host ?? config.poolHost;
+    this.port = identity.endpoint?.port ?? config.poolPort;
   }
 
   connect() {
@@ -48,25 +59,19 @@ export class StratumSession extends EventEmitter {
     }
     this.socket?.destroy();
     this.socket = null;
+    this.emit("state", { state: "closed", algorithmId: this.algorithmId });
   }
 
   submit(jobId: string, extranonce2: string, ntime: string, nonceHex: string) {
-    if (!this.authorized || !this.socket?.writable) {
-      throw new Error("Upstream is not authorized/connected");
-    }
-    if (!jobId || jobId.length > 128 || /[\x00-\x1F\x7F]/.test(jobId)) {
-      throw new Error("Invalid job id");
-    }
+    if (!this.authorized || !this.socket?.writable) throw new Error("Upstream is not authorized/connected");
+    if (!jobId || jobId.length > 128 || /[\x00-\x1F\x7F]/.test(jobId)) throw new Error("Invalid job id");
     if (!/^[0-9a-fA-F]{8}$/.test(ntime)) throw new Error("ntime must be 4-byte hex");
     if (!/^[0-9a-fA-F]{8}$/.test(nonceHex)) throw new Error("nonce must be 4-byte hex");
-    if (!Number.isInteger(this.extranonce2Size) || this.extranonce2Size < 1) {
-      throw new Error("Upstream extranonce2 size is not known");
-    }
-    const expectedExtranonce2Length = this.extranonce2Size * 2;
-    if (!new RegExp(`^[0-9a-fA-F]{${expectedExtranonce2Length}}$`).test(extranonce2)) {
+    if (!Number.isInteger(this.extranonce2Size) || this.extranonce2Size < 1) throw new Error("Upstream extranonce2 size is not known");
+    const expectedLength = this.extranonce2Size * 2;
+    if (!new RegExp(`^[0-9a-fA-F]{${expectedLength}}$`).test(extranonce2)) {
       throw new Error(`extranonce2 must be ${this.extranonce2Size} bytes of hex`);
     }
-
     const id = this.send("mining.submit", [
       this.identity.wallet,
       jobId,
@@ -80,31 +85,31 @@ export class StratumSession extends EventEmitter {
 
   private openSocket() {
     if (this.manualClose || this.fatalAuthFailure || this.socket) return;
-
     this.resetConnectionState();
     const socket = new net.Socket();
     this.socket = socket;
     socket.setKeepAlive(true, 30_000);
     socket.setTimeout(180_000);
+    this.emit("state", { state: "connecting", algorithmId: this.algorithmId });
 
     socket.on("data", (chunk) => this.onData(chunk));
     socket.on("timeout", () => {
       this.emit("log", "UPSTREAM timeout; reconnecting");
       socket.destroy();
     });
-    socket.on("error", (error) => {
-      this.emit("error", error);
-    });
+    socket.on("error", (error) => this.emit("error", error));
     socket.on("close", () => {
       if (this.socket === socket) this.socket = null;
       this.authorized = false;
+      this.emit("state", { state: "disconnected", algorithmId: this.algorithmId });
       this.emit("close");
       this.scheduleReconnect();
     });
 
-    socket.connect(config.poolPort, config.poolHost, () => {
-      this.emit("log", "CONNECTED");
-      this.subscribeId = this.send("mining.subscribe", ["Minewhile/0.9"]);
+    socket.connect(this.port, this.host, () => {
+      this.emit("log", `CONNECTED ${this.algorithmId}`);
+      this.emit("state", { state: "connected", algorithmId: this.algorithmId });
+      this.subscribeId = this.send("mining.subscribe", ["Minewhile/1.0"]);
     });
   }
 
@@ -133,21 +138,17 @@ export class StratumSession extends EventEmitter {
 
   private onData(chunk: Buffer) {
     this.buf += chunk.toString("utf8");
-
     let idx: number;
     while ((idx = this.buf.indexOf("\n")) >= 0) {
       const line = this.buf.slice(0, idx).trim();
       this.buf = this.buf.slice(idx + 1);
-
       if (Buffer.byteLength(line, "utf8") > MAX_STRATUM_LINE_BYTES) {
         this.emit("error", new Error("Oversized Stratum line"));
         this.socket?.destroy();
         return;
       }
-
       if (line) this.onLine(line);
     }
-
     if (Buffer.byteLength(this.buf, "utf8") > MAX_STRATUM_LINE_BYTES) {
       this.emit("error", new Error("Oversized unterminated Stratum message"));
       this.buf = "";
@@ -167,12 +168,8 @@ export class StratumSession extends EventEmitter {
   private onLine(line: string) {
     if (config.debug) this.emit("debug", `<< ${line}`);
     let m: Rpc;
-    try {
-      m = JSON.parse(line);
-    } catch {
-      this.emit("log", "BAD JSON from upstream");
-      return;
-    }
+    try { m = JSON.parse(line); }
+    catch { this.emit("log", "BAD JSON from upstream"); return; }
 
     if (m.id === this.subscribeId && Array.isArray(m.result)) {
       this.extranonce1 = String(m.result[1] ?? "");
@@ -196,6 +193,7 @@ export class StratumSession extends EventEmitter {
         this.authorized = true;
         this.reconnectAttempt = 0;
         this.emit("log", "AUTHORIZED");
+        this.emit("state", { state: "authorized", algorithmId: this.algorithmId });
       }
       return;
     }
@@ -220,7 +218,6 @@ export class StratumSession extends EventEmitter {
       }
       this.difficulty = nextDifficulty;
       this.emit("difficulty", this.difficulty);
-      if (config.debug) this.emit("debug", `DIFFICULTY ${this.difficulty}`);
       return;
     }
 
@@ -241,20 +238,19 @@ export class StratumSession extends EventEmitter {
         ntime: String(p[7]),
         cleanJobs: Boolean(p[8])
       };
-
       if (!this.extranonce1 || !this.extranonce2Size) {
         this.emit("log", "Ignoring notify before subscribe is complete");
         return;
       }
-
       this.extranonce2Counter += 1n;
       try {
-        const browserJob = buildBrowserJob(
+        const browserJob: BrowserJob = buildBrowserJob(
           job,
           this.extranonce1,
           this.extranonce2Size,
           this.extranonce2Counter,
-          this.difficulty
+          this.difficulty,
+          this.algorithmId
         );
         this.emit("job", browserJob);
         this.emit("log", `JOB ${job.jobId}`);
@@ -267,10 +263,7 @@ export class StratumSession extends EventEmitter {
 
     if (typeof m.id === "number" && m.id !== this.subscribeId && m.id !== this.authorizeId) {
       const accepted = m.result === true;
-      this.emit("shareResult", { id: m.id, accepted, error: m.error ?? null });
-      if (config.debug) {
-        this.emit("debug", accepted ? `SHARE ACCEPTED id=${m.id}` : `SHARE REJECTED id=${m.id} ${JSON.stringify(m.error)}`);
-      }
+      this.emit("shareResult", { id: m.id, accepted, error: m.error ?? null, algorithmId: this.algorithmId });
     }
   }
 }

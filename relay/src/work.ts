@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { getAlgorithm, type AlgorithmId } from "./algorithms.js";
 
 export type NotifyJob = {
   jobId: string;
@@ -15,9 +16,13 @@ export type NotifyJob = {
 export type BrowserJob = {
   jobId: string;
   header76Hex: string;
-  targetHex: string;       // 32-byte little-endian target, same comparison order as hash
+  targetHex: string;
   extranonce2: string;
   ntime: string;
+  algorithmId: AlgorithmId;
+  N: number;
+  r: number;
+  personalization: string | null;
 };
 
 export function sha256d(data: Buffer): Buffer {
@@ -26,9 +31,7 @@ export function sha256d(data: Buffer): Buffer {
 }
 
 function hexBuffer(hex: string, expectedBytes?: number, label = "hex value"): Buffer {
-  if (hex.length % 2 !== 0 || !/^[0-9a-fA-F]*$/.test(hex)) {
-    throw new Error(`Invalid ${label}`);
-  }
+  if (hex.length % 2 !== 0 || !/^[0-9a-fA-F]*$/.test(hex)) throw new Error(`Invalid ${label}`);
   const value = Buffer.from(hex, "hex");
   if (expectedBytes !== undefined && value.length !== expectedBytes) {
     throw new Error(`Expected ${expectedBytes} bytes for ${label}, got ${value.length}`);
@@ -52,27 +55,18 @@ function reverseEachWord32(hex64: string): Buffer {
   return out;
 }
 
-/*
- * cpuminer-opt's YesPower registration sets opt_target_factor = 65536.
- * That means Stratum diff is converted to an effective target using
- * Bitcoin diff-1 target * 65536. Keep this path stable: it is part of
- * Minewhile's accepted-share v0.1 behavior.
- */
 const BITCOIN_DIFF1 =
   BigInt("0x00000000ffff0000000000000000000000000000000000000000000000000000");
 const YESPOWER_DIFF1 = BITCOIN_DIFF1 * 65536n;
 
 export function difficultyToTargetLE(diff: number): Buffer {
   if (!Number.isFinite(diff) || diff <= 0) throw new Error(`Bad difficulty: ${diff}`);
-
   const SCALE = 1_000_000_000n;
   const scaledDifficulty = BigInt(Math.max(1, Math.round(diff * Number(SCALE))));
   let target = (YESPOWER_DIFF1 * SCALE) / scaledDifficulty;
   const max256 = (1n << 256n) - 1n;
   if (target > max256) target = max256;
-
-  const bigEndianHex = target.toString(16).padStart(64, "0");
-  return Buffer.from(bigEndianHex, "hex").reverse();
+  return Buffer.from(target.toString(16).padStart(64, "0"), "hex").reverse();
 }
 
 export function compareUint256LE(a: Uint8Array, b: Uint8Array): number {
@@ -89,7 +83,8 @@ export function buildBrowserJob(
   extranonce1: string,
   extranonce2Size: number,
   extranonce2Counter: bigint,
-  difficulty: number
+  difficulty: number,
+  algorithmId: AlgorithmId = "yespower"
 ): BrowserJob {
   if (!job.jobId || job.jobId.length > 128) throw new Error("Invalid job id");
   if (!Number.isInteger(extranonce2Size) || extranonce2Size < 1 || extranonce2Size > 16) {
@@ -99,17 +94,11 @@ export function buildBrowserJob(
   hexBuffer(job.coinb1, undefined, "coinb1");
   hexBuffer(job.coinb2, undefined, "coinb2");
 
-  const extranonce2 = extranonce2Counter
-    .toString(16)
-    .padStart(extranonce2Size * 2, "0")
-    .slice(-extranonce2Size * 2);
-
+  const extranonce2 = extranonce2Counter.toString(16).padStart(extranonce2Size * 2, "0").slice(-extranonce2Size * 2);
   const coinbase = hexBuffer(job.coinb1 + extranonce1 + extranonce2 + job.coinb2, undefined, "coinbase");
-
   let merkle = sha256d(coinbase);
   for (const branchHex of job.merkleBranch) {
-    const branch = hexBuffer(branchHex, 32, "merkle branch");
-    merkle = sha256d(Buffer.concat([merkle, branch]));
+    merkle = sha256d(Buffer.concat([merkle, hexBuffer(branchHex, 32, "merkle branch")]));
   }
 
   const header76 = Buffer.concat([
@@ -119,16 +108,18 @@ export function buildBrowserJob(
     reverse4(job.ntime),
     reverse4(job.nbits)
   ]);
+  if (header76.length !== 76) throw new Error(`Header prefix length ${header76.length}, expected 76`);
 
-  if (header76.length !== 76) {
-    throw new Error(`Header prefix length ${header76.length}, expected 76`);
-  }
-
+  const algorithm = getAlgorithm(algorithmId);
   return {
     jobId: job.jobId,
     header76Hex: header76.toString("hex"),
     targetHex: difficultyToTargetLE(difficulty).toString("hex"),
     extranonce2,
-    ntime: job.ntime.toLowerCase()
+    ntime: job.ntime.toLowerCase(),
+    algorithmId,
+    N: algorithm.N,
+    r: algorithm.r,
+    personalization: algorithm.personalization
   };
 }

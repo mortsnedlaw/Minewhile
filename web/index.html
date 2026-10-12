@@ -4,172 +4,243 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="description" content="Minewhile — opt-in browser YesPower miner" />
-  <title>Minewhile v0.9.5</title>
+  <title>Minewhile v1.0.0</title>
 </head>
 <body>
   <main class="shell">
     <header>
-      <h1>MINEWHILE</h1>
-      <p class="subtitle">Opt-in browser YesPower miner</p>
+      <div>
+        <h1>MINEWHILE</h1>
+        <p class="subtitle">Opt-in browser mining · private pool relay · smart YesPower scheduling</p>
+      </div>
+      <div class="version-badge">v1.0.0</div>
     </header>
 
-    <section class="panel" aria-labelledby="settings-heading">
-      <h2 id="settings-heading">Mining settings</h2>
+    <nav class="tabs" aria-label="Minewhile sections">
+      <button type="button" class="tab active" data-tab="miner">MINER</button>
+      <button type="button" class="tab" data-tab="settings">SETTINGS</button>
+      <button type="button" class="tab" data-tab="referrals">REFERRALS</button>
+    </nav>
 
-      <div class="field-row">
-        <label for="currency">Payout currency</label>
-        <select id="currency"></select>
+    <div class="view active" data-view="miner">
+      <section class="health-strip" aria-label="Connection health">
+        <div><span>Relay</span><strong id="relayHealth">offline</strong></div>
+        <div><span>Pool</span><strong id="poolHealth">offline</strong></div>
+        <div><span>Last share</span><strong id="lastShareHealth">—</strong></div>
+      </section>
+
+      <section class="stats" aria-label="Mining status">
+        <div class="stat"><span>Status</span><strong id="status">stopped</strong></div>
+        <div class="stat"><span>Mode</span><strong id="mode">User payout</strong></div>
+        <div class="stat hero-stat"><span>Total hashrate</span><strong id="hashrate">0 H/s</strong></div>
+        <div class="stat"><span>1 min average</span><strong id="hashrate1m">0 H/s</strong></div>
+        <div class="stat"><span>Active workers</span><strong id="activeWorkers">0 / 0</strong></div>
+        <div class="stat"><span>Mining difficulty</span><strong id="difficulty">—</strong></div>
+        <div class="stat"><span>Algorithm</span><strong id="algorithm">yespower</strong></div>
+        <div class="stat"><span>Scheduler</span><strong id="scheduler">auto</strong></div>
+        <div class="stat"><span>Next payout switch</span><strong id="countdown">—</strong></div>
+        <div class="stat"><span>Session time</span><strong id="sessionTime">0:00</strong></div>
+        <div class="stat"><span>User accepted / rejected</span><strong><span id="userAccepted">0</span> / <span id="userRejected">0</span></strong></div>
+        <div class="stat"><span>Referral accepted / rejected</span><strong><span id="beneficiaryAccepted">0</span> / <span id="beneficiaryRejected">0</span></strong></div>
+        <div class="stat"><span>Minewhile accepted / rejected</span><strong><span id="devAccepted">0</span> / <span id="devRejected">0</span></strong></div>
+      </section>
+
+      <div class="actions">
+        <button id="startQuick" class="primary">START MINING</button>
+        <button id="tuneMiner" class="secondary">TUNE &amp; VERIFY</button>
+        <button id="stop" class="secondary">STOP MINING</button>
       </div>
+      <p id="supportNote" class="support-note">95% you · 5% Minewhile · pool fees are separate</p>
+      <p id="tuneLiveStatus" class="support-note">Tune measures H/s locally; two accepted shares verify each algorithm.</p>
+        <div id="tuneProgressMiner" class="tune-progress"></div>
 
-      <div class="field-row">
-        <label for="wallet">Payout address</label>
-        <input id="wallet" type="text" placeholder="Enter your wallet address" maxlength="128" autocomplete="off" spellcheck="false" />
-      </div>
-
-      <div class="field-row">
-        <label for="workerSlider">Mining workers</label>
-        <div class="slider-wrap">
-          <input id="workerSlider" type="range" min="1" max="16" value="4" />
-          <strong><span id="workerValue">4</span> workers</strong>
+      <section class="panel intelligence-panel" aria-labelledby="intelligence-heading">
+        <div class="section-heading">
+          <div>
+            <h2 id="intelligence-heading">Algorithm intelligence</h2>
+            <span class="subtle">AUTO ranks verified algorithms using your measured browser performance and current upstream economics.</span>
+          </div>
+          <span id="schedulerConfidence" class="intel-badge">learning</span>
         </div>
-      </div>
 
-      <div class="field-row compact-row">
-        <span class="field-label">Logical CPU threads detected</span>
-        <strong id="detectedThreads">—</strong>
-      </div>
+        <div class="intelligence-grid">
+          <div class="intel-card"><span>Selected algorithm</span><strong id="schedulerBest">—</strong></div>
+          <div class="intel-card"><span>Your benchmark</span><strong id="schedulerBenchmark">—</strong></div>
+          <div class="intel-card"><span>Current chain</span><strong id="schedulerCoin">—</strong></div>
+          <div class="intel-card"><span>Network estimate</span><strong id="schedulerNetwork">learning…</strong></div>
+          <div class="intel-card"><span>Upstream hash</span><strong id="schedulerPool">—</strong></div>
+          <div class="intel-card"><span>Your network share</span><strong id="schedulerUserShare">—</strong></div>
+          <div class="intel-card"><span>Minewhile fleet share</span><strong id="schedulerFleetShare">—</strong></div>
+          <div class="intel-card"><span>Saturation factor</span><strong id="schedulerPenalty">100%</strong></div>
+          <div class="intel-card"><span>Profitability score</span><strong id="schedulerScore">—</strong></div>
+        </div>
 
-    </section>
+        <details class="intel-details">
+          <summary>Network estimate details</summary>
+          <pre id="schedulerDetails">Waiting for scheduler data…</pre>
+        </details>
+      </section>
 
-    <section class="stats" aria-label="Mining status">
-      <div class="stat"><span>Status</span><strong id="status">stopped</strong></div>
-      <div class="stat"><span>Mode</span><strong id="mode">User payout</strong></div>
-      <div class="stat"><span>Total hashrate</span><strong id="hashrate">0 H/s</strong></div>
-      <div class="stat"><span>Active workers</span><strong id="activeWorkers">0 / 0</strong></div>
-      <div class="stat"><span>Mining difficulty</span><strong id="difficulty">—</strong></div>
-      <div class="stat"><span>Algorithm</span><strong id="algorithm">yespower</strong></div>
-      <div class="stat"><span>Algo scheduler</span><strong id="scheduler">shadow</strong></div>
-      <div class="stat"><span>Next mode switch</span><strong id="countdown">—</strong></div>
-      <div class="stat"><span>Session time</span><strong id="sessionTime">0:00</strong></div>
-      <div class="stat"><span>User accepted</span><strong id="userAccepted">0</strong></div>
-      <div class="stat"><span>User rejected</span><strong id="userRejected">0</strong></div>
-      <div class="stat"><span>Referral accepted</span><strong id="beneficiaryAccepted">0</strong></div>
-      <div class="stat"><span>Referral rejected</span><strong id="beneficiaryRejected">0</strong></div>
-      <div class="stat"><span>Minewhile accepted</span><strong id="devAccepted">0</strong></div>
-      <div class="stat"><span>Minewhile rejected</span><strong id="devRejected">0</strong></div>
-    </section>
+      <section class="panel earnings-panel" aria-labelledby="earnings-heading">
+        <div class="section-heading">
+          <h2 id="earnings-heading">Your earnings</h2>
+          <span id="statsUpdated" class="subtle">Starts updating when mining begins</span>
+        </div>
+        <div class="earnings-grid">
+          <div class="metric"><span>Pending / unpaid</span><strong id="walletUnpaid">—</strong></div>
+          <div class="metric"><span>Confirmed balance</span><strong id="walletBalance">—</strong></div>
+          <div class="metric"><span>Paid last 24h</span><strong id="walletPaid24h">—</strong></div>
+          <div class="metric"><span>Total earned</span><strong id="walletTotal">—</strong></div>
+          <div class="metric"><span>Wallet change this session</span><strong id="walletSessionChange">—</strong></div>
+          <div class="metric"><span>Last payout</span><strong id="lastPayout">—</strong></div>
+        </div>
+        <div class="blocks-heading">
+          <h2>Recent YesPower blocks</h2>
+          <span class="subtle">Pool-wide blocks; not necessarily found by this browser.</span>
+        </div>
+        <div id="recentBlocks" class="block-list">
+          <div class="empty-state">Block data appears after mining starts.</div>
+        </div>
+      </section>
 
-
-    <section class="panel earnings-panel" aria-labelledby="earnings-heading">
-      <div class="section-heading">
-        <h2 id="earnings-heading">Your earnings</h2>
-        <span id="statsUpdated" class="subtle">Starts updating when mining begins</span>
-      </div>
-      <div class="earnings-grid">
-        <div class="metric"><span>Pending / unpaid</span><strong id="walletUnpaid">—</strong></div>
-        <div class="metric"><span>Confirmed balance</span><strong id="walletBalance">—</strong></div>
-        <div class="metric"><span>Paid last 24h</span><strong id="walletPaid24h">—</strong></div>
-        <div class="metric"><span>Total earned</span><strong id="walletTotal">—</strong></div>
-        <div class="metric"><span>Wallet change this session</span><strong id="walletSessionChange">—</strong></div>
-        <div class="metric"><span>Last payout</span><strong id="lastPayout">—</strong></div>
-      </div>
-      <div class="blocks-heading">
-        <h2>Recent YesPower blocks</h2>
-        <span class="subtle">Pool-wide blocks; not necessarily found by this browser.</span>
-      </div>
-      <div id="recentBlocks" class="block-list">
-        <div class="empty-state">Block data appears after mining starts.</div>
-      </div>
-    </section>
-
-    <div class="actions">
-      <button id="start" class="primary">START MINING</button>
-      <button id="stop" class="secondary">STOP MINING</button>
+      <section aria-labelledby="log-heading">
+        <div class="log-header">
+          <strong id="log-heading">LOG</strong>
+          <div class="log-controls">
+            <button id="clearLog" type="button">Clear log</button>
+            <label><input id="autoscroll" type="checkbox" checked /> Auto-scroll</label>
+          </div>
+        </div>
+        <pre id="log" aria-live="polite"></pre>
+      </section>
     </div>
-    <p id="supportNote" class="support-note">90% you · 10% Minewhile</p>
 
-    <section class="panel referral-panel" aria-labelledby="referral-heading">
-      <div class="section-heading">
-        <div>
-          <h2 id="referral-heading">Create a referral</h2>
-          <span class="subtle">
-            Referred miners keep 90%. The referrer receives 5% and Minewhile receives 5%.
-          </span>
-        </div>
-      </div>
-
-      <div class="field-row">
-        <label for="referralCurrency">Referral payout currency</label>
-        <select id="referralCurrency"></select>
-      </div>
-
-      <div class="field-row">
-        <label for="referralWallet">Referral payout address</label>
-        <input
-          id="referralWallet"
-          type="text"
-          maxlength="128"
-          autocomplete="off"
-          spellcheck="false"
-          placeholder="Wallet receiving referral mining"
-        />
-      </div>
-
-      <div class="referral-actions">
-        <button id="createReferral" type="button" class="secondary">
-          CREATE REFERRAL
-        </button>
-
-        <span id="referralCreateStatus" class="subtle"></span>
-      </div>
-
-      <div id="referralCreateResult" class="referral-result" hidden>
-
-        <div class="referral-result-row">
-          <label for="createdReferralLink">Referral link</label>
-
-          <div class="copy-row">
-            <input id="createdReferralLink" type="text" readonly />
-            <button id="copyReferralLink" type="button">COPY</button>
+    <div class="view" data-view="settings" hidden>
+      <section class="panel" aria-labelledby="settings-heading">
+        <div class="section-heading">
+          <div>
+            <h2 id="settings-heading">Mining settings</h2>
+            <span class="subtle">Start here and Minewhile returns to the Miner dashboard automatically.</span>
           </div>
         </div>
 
-        <div class="referral-result-row">
-          <label for="createdManagementLink">Management link</label>
+        <div class="field-row">
+          <label for="currency">Payout currency</label>
+          <select id="currency"></select>
+        </div>
 
-          <div class="copy-row">
-            <input id="createdManagementLink" type="text" readonly />
-            <button id="copyManagementLink" type="button">COPY</button>
+        <div class="field-row">
+          <label for="wallet">Payout address</label>
+          <input id="wallet" type="text" placeholder="Enter your wallet address" maxlength="128" autocomplete="off" spellcheck="false" />
+        </div>
+
+        <div class="field-row">
+          <label for="workerSlider">Mining workers</label>
+          <div class="slider-wrap">
+            <input id="workerSlider" type="range" min="1" max="16" value="4" />
+            <strong><span id="workerValue">4</span> workers</strong>
           </div>
         </div>
 
-        <div class="referral-result-row">
-          <label for="createdManagementSecret">Management secret</label>
+        <div class="field-row compact-row">
+          <span class="field-label">Logical CPU threads detected</span>
+          <strong id="detectedThreads">—</strong>
+        </div>
 
-          <div class="copy-row">
-            <input id="createdManagementSecret" type="text" readonly />
-            <button id="copyManagementSecret" type="button">COPY</button>
+        <div class="field-row">
+          <label for="algorithmMode">Algorithm selection</label>
+          <select id="algorithmMode">
+            <option value="auto">Auto — maximize estimated profitability</option>
+            <option value="fixed">Fixed — stay on one verified algorithm</option>
+          </select>
+        </div>
+
+        <div class="field-row" id="fixedAlgorithmRow" hidden>
+          <label for="fixedAlgorithm">Fixed algorithm</label>
+          <select id="fixedAlgorithm"><option value="yespower">YesPower</option></select>
+        </div>
+
+        <div class="tune-card">
+          <div>
+            <strong>Tune &amp; verify</strong>
+            <p class="subtle">All available Minewhile YesPower variants are measured locally. Each runs until two real Zpool shares are accepted, with a five-minute safety cap. During tuning 100% goes to the Minewhile developer wallet.</p>
+          </div>
+          <button id="tune30" type="button" class="secondary">TUNE &amp; VERIFY</button>
+          <div id="tuneStatus" class="subtle">Press Tune directly; Minewhile starts mining automatically if needed.</div>
+          <div id="tuneResults" class="tune-results"></div>
+        </div>
+
+        <div class="actions settings-actions">
+          <button id="start" class="primary">START MINING</button>
+        </div>
+      </section>
+    </div>
+
+    <div class="view" data-view="referrals" hidden>
+      <section class="panel referral-panel" aria-labelledby="referral-heading">
+        <div class="section-heading">
+          <div>
+            <h2 id="referral-heading">Create a referral</h2>
+            <span class="subtle">Referred miners always keep 95%. The referrer receives 3% and Minewhile receives 2%.</span>
           </div>
         </div>
 
-        <p class="subtle">
-          Save the management link or secret now.
-          Minewhile stores only its hash and cannot recover the original secret later.
-        </p>
-      </div>
-    </section>
-
-    <section aria-labelledby="log-heading">
-      <div class="log-header">
-        <strong id="log-heading">LOG</strong>
-        <div class="log-controls">
-          <button id="clearLog" type="button">Clear log</button>
-          <label><input id="autoscroll" type="checkbox" checked /> Auto-scroll</label>
+        <div class="field-row">
+          <label for="referralCurrency">Referral payout currency</label>
+          <select id="referralCurrency"></select>
         </div>
-      </div>
-      <pre id="log" aria-live="polite"></pre>
-    </section>
-  </main>
+        <div class="field-row">
+          <label for="referralWallet">Referral payout address</label>
+          <input id="referralWallet" type="text" maxlength="128" autocomplete="off" spellcheck="false" placeholder="Wallet receiving referral mining" />
+        </div>
+        <div class="referral-actions">
+          <button id="createReferral" type="button" class="secondary">CREATE REFERRAL</button>
+          <span id="referralCreateStatus" class="subtle"></span>
+        </div>
+
+        <div id="referralCreateResult" class="referral-result" hidden>
+          <div class="referral-result-row">
+            <label for="createdReferralLink">Referral link</label>
+            <div class="copy-row"><input id="createdReferralLink" type="text" readonly /><button id="copyReferralLink" type="button">COPY</button></div>
+          </div>
+          <div class="referral-result-row">
+            <label for="createdManagementLink">Management link</label>
+            <div class="copy-row"><input id="createdManagementLink" type="text" readonly /><button id="copyManagementLink" type="button">COPY</button></div>
+          </div>
+          <div class="referral-result-row">
+            <label for="createdManagementSecret">Management secret</label>
+            <div class="copy-row"><input id="createdManagementSecret" type="text" readonly /><button id="copyManagementSecret" type="button">COPY</button></div>
+          </div>
+          <p class="subtle">Save the management link or secret now. Minewhile stores only its hash.</p>
+        </div>
+      </section>
+
+      <section class="panel" aria-labelledby="manage-heading">
+        <div class="section-heading">
+          <div>
+            <h2 id="manage-heading">Manage a referral</h2>
+            <span class="subtle">Open a management link or enter the ID and secret below.</span>
+          </div>
+        </div>
+        <div class="field-row"><label for="manageReferralId">Referral ID</label><input id="manageReferralId" type="text" maxlength="8" autocomplete="off" /></div>
+        <div class="field-row"><label for="manageReferralSecret">Management secret</label><input id="manageReferralSecret" type="password" autocomplete="off" /></div>
+        <div class="referral-actions"><button id="loadReferralManagement" type="button" class="secondary">LOAD</button><span id="referralManagementStatus" class="subtle"></span></div>
+
+        <div id="referralManagementResult" class="referral-result" hidden>
+          <div class="field-row"><label for="manageReferralCurrency">Payout currency</label><select id="manageReferralCurrency"></select></div>
+          <div class="field-row"><label for="manageReferralWallet">Payout address</label><input id="manageReferralWallet" type="text" maxlength="128" autocomplete="off" /></div>
+          <label class="toggle-row"><input id="manageReferralEnabled" type="checkbox" checked /> Referral enabled</label>
+          <div class="earnings-grid compact-metrics">
+            <div class="metric"><span>Accepted shares</span><strong id="manageAcceptedShares">0</strong></div>
+            <div class="metric"><span>Rejected shares</span><strong id="manageRejectedShares">0</strong></div>
+            <div class="metric"><span>Last share</span><strong id="manageLastShare">—</strong></div>
+          </div>
+          <button id="saveReferralManagement" type="button" class="primary">SAVE REFERRAL</button>
+        </div>
+        <p id="httpSecretWarning" class="warning-note" hidden>Management traffic is not transport-encrypted until Minewhile is served over HTTPS/WSS.</p>
+      </section>
+    </div>
+    </main>
   <script type="module" src="/src/main.ts"></script>
 </body>
 </html>
