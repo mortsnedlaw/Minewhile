@@ -1,4 +1,6 @@
 import "./style.css";
+import { initReferralCreator } from "./referral.js";
+import { ALGORITHM_BENCHMARKS } from "./algorithmCatalog.js";
 
 const isViteDev = location.port === "5173";
 const relayUrl = isViteDev
@@ -33,6 +35,13 @@ const userAcceptedEl = document.querySelector("#userAccepted")!;
 const userRejectedEl = document.querySelector("#userRejected")!;
 const devAcceptedEl = document.querySelector("#devAccepted")!;
 const devRejectedEl = document.querySelector("#devRejected")!;
+
+const beneficiaryAcceptedEl = document.querySelector<HTMLElement>("#beneficiaryAccepted")!;
+const beneficiaryRejectedEl = document.querySelector<HTMLElement>("#beneficiaryRejected")!;
+const algorithmEl = document.querySelector<HTMLElement>("#algorithm")!;
+const schedulerEl = document.querySelector<HTMLElement>("#scheduler")!;
+const supportNoteEl = document.querySelector<HTMLElement>("#supportNote")!;
+
 const logEl = document.querySelector<HTMLElement>("#log")!;
 const startBtn = document.querySelector<HTMLButtonElement>("#start")!;
 const stopBtn = document.querySelector<HTMLButtonElement>("#stop")!;
@@ -70,6 +79,8 @@ const logLines: string[] = [];
 
 let acceptedUser = 0;
 let rejectedUser = 0;
+let beneficiaryAccepted = 0;
+let beneficiaryRejected = 0;
 let acceptedDev = 0;
 let rejectedDev = 0;
 
@@ -241,6 +252,8 @@ function setModeLabel(mode: MiningMode, countdownMs: number) {
 function updateShareCounts() {
   userAcceptedEl.textContent = String(acceptedUser);
   userRejectedEl.textContent = String(rejectedUser);
+  beneficiaryAcceptedEl.textContent = String(beneficiaryAccepted);
+  beneficiaryRejectedEl.textContent = String(beneficiaryRejected);
   devAcceptedEl.textContent = String(acceptedDev);
   devRejectedEl.textContent = String(rejectedDev);
 }
@@ -248,6 +261,8 @@ function updateShareCounts() {
 function resetSessionStats() {
   acceptedUser = 0;
   rejectedUser = 0;
+  beneficiaryAccepted = 0;
+  beneficiaryRejected = 0;
   acceptedDev = 0;
   rejectedDev = 0;
   difficultyByMode.clear();
@@ -351,6 +366,119 @@ function assignJobToWorkers(job: BrowserJob) {
   }
 }
 
+
+const ALGO_BENCHMARK_STORAGE = "algoBenchmarkV1";
+const ALGO_BENCHMARK_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+let benchmarkWorker: Worker | null = null;
+
+function sendAlgorithmBenchmark(perWorkerResults: Record<string, number>) {
+  if (!miningRequested || ws?.readyState !== WebSocket.OPEN) return;
+
+  const workers = Math.max(1, Number(workerSlider.value));
+
+  const estimatedBrowserResults = Object.fromEntries(
+    Object.entries(perWorkerResults).map(([id, hps]) => [
+      id,
+      Number(hps) * workers
+    ])
+  );
+
+  ws.send(JSON.stringify({
+    type: "benchmark",
+    results: estimatedBrowserResults
+  }));
+}
+
+function launchAlgorithmBenchmark() {
+  const cached = readStored<any>(ALGO_BENCHMARK_STORAGE, null);
+
+  if (
+    cached &&
+    typeof cached === "object" &&
+    Number.isFinite(Number(cached.at)) &&
+    Date.now() - Number(cached.at) < ALGO_BENCHMARK_MAX_AGE_MS &&
+    cached.results &&
+    typeof cached.results === "object"
+  ) {
+    log("Using cached YesPower algorithm benchmark.");
+    sendAlgorithmBenchmark(cached.results);
+    return;
+  }
+
+  if (benchmarkWorker) return;
+
+  log("Benchmarking YesPower variants in the background...");
+
+  const worker = new Worker(
+    new URL("./miner.worker.ts", import.meta.url),
+    { type: "module" }
+  );
+
+  benchmarkWorker = worker;
+
+  const timeout = window.setTimeout(() => {
+    if (benchmarkWorker === worker) benchmarkWorker = null;
+    worker.terminate();
+    log("Algorithm benchmark timed out; standard YesPower continues.");
+  }, 25_000);
+
+  worker.onmessage = (event) => {
+    const message = event.data;
+
+    if (message.type === "ready") {
+      worker.postMessage({
+        type: "benchmark",
+        algorithms: ALGORITHM_BENCHMARKS,
+        durationMs: 450
+      });
+      return;
+    }
+
+    if (message.type === "benchmark_result") {
+      const results =
+        message.results && typeof message.results === "object"
+          ? message.results
+          : {};
+
+      writeStored(ALGO_BENCHMARK_STORAGE, {
+        at: Date.now(),
+        results
+      });
+
+      clearTimeout(timeout);
+      worker.terminate();
+
+      if (benchmarkWorker === worker) benchmarkWorker = null;
+
+      const summary = Object.entries(results)
+        .map(([id, hps]) => `${id}=${formatHashrate(Number(hps))}/worker`)
+        .join(" · ");
+
+      log(`Algorithm benchmark complete: ${summary}`);
+      sendAlgorithmBenchmark(results);
+      return;
+    }
+
+    if (message.type === "error") {
+      clearTimeout(timeout);
+      worker.terminate();
+
+      if (benchmarkWorker === worker) benchmarkWorker = null;
+
+      log(`Algorithm benchmark failed: ${message.message}. Standard YesPower continues.`);
+    }
+  };
+
+  worker.onerror = (event) => {
+    clearTimeout(timeout);
+    worker.terminate();
+
+    if (benchmarkWorker === worker) benchmarkWorker = null;
+
+    log(`Algorithm benchmark worker error: ${event.message}. Standard YesPower continues.`);
+  };
+}
+
 function selectedStartPayload() {
   return {
     type: "start",
@@ -428,8 +556,12 @@ function connectRelay() {
       if (message.shares) {
         acceptedUser = Number(message.shares.user?.accepted ?? acceptedUser);
         rejectedUser = Number(message.shares.user?.rejected ?? rejectedUser);
+        beneficiaryAccepted = Number(message.shares.beneficiary?.accepted ?? beneficiaryAccepted);
+        beneficiaryRejected = Number(message.shares.beneficiary?.rejected ?? beneficiaryRejected);
         acceptedDev = Number(message.shares.dev?.accepted ?? acceptedDev);
         rejectedDev = Number(message.shares.dev?.rejected ?? rejectedDev);
+      } else if (message.mode === "beneficiary") {
+        message.accepted ? beneficiaryAccepted++ : beneficiaryRejected++;
       } else if (message.mode === "dev") {
         message.accepted ? acceptedDev++ : rejectedDev++;
       } else if (message.mode === "user") {
@@ -439,6 +571,35 @@ function connectRelay() {
       log(message.accepted
         ? `SHARE ACCEPTED (${message.mode})`
         : `SHARE REJECTED (${message.mode}) ${JSON.stringify(message.error)}`);
+      return;
+    }
+
+
+    if (message.type === "algorithm_recommendation") {
+      schedulerEl.textContent = String(message.mode ?? "shadow");
+
+      const selected = message.selected;
+
+      if (selected) {
+        const impact =
+          selected.impactRatio === null ||
+          selected.impactRatio === undefined
+            ? "impact unknown"
+            : `${(Number(selected.impactRatio) * 100).toFixed(2)}% projected fleet impact`;
+
+        log(
+          `Scheduler (${message.mode}): recommends ${selected.displayName} ` +
+          `@ ${formatHashrate(Number(selected.benchmarkHps))} · ${impact}`
+        );
+
+        if (message.mode === "shadow") {
+          algorithmEl.textContent =
+            `yespower · shadow→${selected.id}`;
+        }
+      } else {
+        log("Scheduler could not rank an alternative; standard YesPower continues.");
+      }
+
       return;
     }
 
@@ -460,6 +621,9 @@ function connectRelay() {
     if (message.type === "started") {
       log(`Mining started for ${message.payoutCurrency}: ${String(message.payoutAddress).slice(0, 8)}...`);
       requestWalletStats();
+      schedulerEl.textContent = String(message.schedulerMode ?? "shadow");
+      algorithmEl.textContent = String(message.currentAlgorithm ?? "yespower");
+      launchAlgorithmBenchmark();
       return;
     }
 
@@ -576,6 +740,8 @@ currencyEl.innerHTML = [
     .join("")}</optgroup>`
 ].join("");
 currencyEl.value = readStored("currency", "LTC");
+
+initReferralCreator(relayUrl);
 walletEl.value = readStored("wallet", "");
 workerSlider.min = "1";
 workerSlider.max = String(maxWorkers);
@@ -619,3 +785,7 @@ log("Minewhile ready — mining starts only when you press START.");
 if (activeBeneficiaryId) {
   log(`Referral active: ${activeBeneficiaryId}`);
 }
+
+supportNoteEl.textContent = activeBeneficiaryId
+  ? "90% you · 5% referrer · 5% Minewhile"
+  : "90% you · 10% Minewhile";

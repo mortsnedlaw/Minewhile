@@ -259,3 +259,48 @@ select optgroup { font-weight: 700; }
   .blocks-heading { align-items: flex-start; flex-direction: column; gap: 0.2rem; }
   .block-row { grid-template-columns: 1fr 1fr; }
 }
+
+
+.referral-panel {
+  margin-top: 1rem;
+}
+
+.referral-actions {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-top: 1rem;
+}
+
+.referral-result {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid rgba(127, 127, 127, 0.25);
+}
+
+.referral-result-row {
+  margin-bottom: 1rem;
+}
+
+.referral-result-row > label {
+  display: block;
+  margin-bottom: 0.35rem;
+}
+
+.copy-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.5rem;
+}
+
+.copy-row input {
+  width: 100%;
+  min-width: 0;
+}
+
+@media (max-width: 650px) {
+  .copy-row {
+    grid-template-columns: 1fr;
+  }
+}

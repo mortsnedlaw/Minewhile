@@ -127,3 +127,54 @@ test("session routing exposes beneficiary mode only for referred miners", () => 
     "dev"
   );
 });
+
+
+import {
+  rankAlgorithmCandidates
+} from "./algoScheduler.js";
+
+test("shadow scheduler ranks profitability using browser hashrate", () => {
+  const status = {
+    yespower: {
+      name: "yespower",
+      port: 6234,
+      estimate_current: "1",
+      estimate_last24h: "1",
+      mbtc_mh_factor: "1",
+      hashrate: 1000000
+    },
+    yespowerTIDE: {
+      name: "yespowerTIDE",
+      port: 6240,
+      estimate_current: "2",
+      estimate_last24h: "2",
+      mbtc_mh_factor: "1",
+      hashrate: 1000000
+    }
+  };
+
+  const currencies = {
+    A: {
+      algo: "yespower",
+      hashrate: 100000000
+    },
+    B: {
+      algo: "yespowerTIDE",
+      hashrate: 100000000
+    }
+  };
+
+  const ranked = rankAlgorithmCandidates(
+    status,
+    currencies,
+    {
+      yespower: 100,
+      yespowertide: 100
+    },
+    1
+  );
+
+  assert.equal(ranked[0].id, "yespowertide");
+  assert.equal(ranked[0].port, 6240);
+  assert.ok(ranked[0].score > ranked[1].score);
+});

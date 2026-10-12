@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="description" content="Minewhile — opt-in browser YesPower miner" />
-  <title>Minewhile v0.10 beta</title>
+  <title>Minewhile v0.9.5</title>
 </head>
 <body>
   <main class="shell">
@@ -87,6 +87,77 @@
       <button id="stop" class="secondary">STOP MINING</button>
     </div>
     <p id="supportNote" class="support-note">90% you · 10% Minewhile</p>
+
+    <section class="panel referral-panel" aria-labelledby="referral-heading">
+      <div class="section-heading">
+        <div>
+          <h2 id="referral-heading">Create a referral</h2>
+          <span class="subtle">
+            Referred miners keep 90%. The referrer receives 5% and Minewhile receives 5%.
+          </span>
+        </div>
+      </div>
+
+      <div class="field-row">
+        <label for="referralCurrency">Referral payout currency</label>
+        <select id="referralCurrency"></select>
+      </div>
+
+      <div class="field-row">
+        <label for="referralWallet">Referral payout address</label>
+        <input
+          id="referralWallet"
+          type="text"
+          maxlength="128"
+          autocomplete="off"
+          spellcheck="false"
+          placeholder="Wallet receiving referral mining"
+        />
+      </div>
+
+      <div class="referral-actions">
+        <button id="createReferral" type="button" class="secondary">
+          CREATE REFERRAL
+        </button>
+
+        <span id="referralCreateStatus" class="subtle"></span>
+      </div>
+
+      <div id="referralCreateResult" class="referral-result" hidden>
+
+        <div class="referral-result-row">
+          <label for="createdReferralLink">Referral link</label>
+
+          <div class="copy-row">
+            <input id="createdReferralLink" type="text" readonly />
+            <button id="copyReferralLink" type="button">COPY</button>
+          </div>
+        </div>
+
+        <div class="referral-result-row">
+          <label for="createdManagementLink">Management link</label>
+
+          <div class="copy-row">
+            <input id="createdManagementLink" type="text" readonly />
+            <button id="copyManagementLink" type="button">COPY</button>
+          </div>
+        </div>
+
+        <div class="referral-result-row">
+          <label for="createdManagementSecret">Management secret</label>
+
+          <div class="copy-row">
+            <input id="createdManagementSecret" type="text" readonly />
+            <button id="copyManagementSecret" type="button">COPY</button>
+          </div>
+        </div>
+
+        <p class="subtle">
+          Save the management link or secret now.
+          Minewhile stores only its hash and cannot recover the original secret later.
+        </p>
+      </div>
+    </section>
 
     <section aria-labelledby="log-heading">
       <div class="log-header">

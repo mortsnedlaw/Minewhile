@@ -1,9 +1,21 @@
 import type { IncomingMessage } from "node:http";
 import { WebSocketServer, type RawData } from "ws";
-import { assertRuntimeConfig, config, isAllowedOrigin } from "./config.js";
+import {
+  assertRuntimeConfig,
+  config,
+  isAllowedOrigin,
+  isSupportedCurrency
+} from "./config.js";
 import { SlidingWindowRateLimiter } from "./rateLimit.js";
 import { getWalletStats } from "./poolStats.js";
-import { getBeneficiary } from "./beneficiary.js";
+import {
+  createBeneficiary,
+  getBeneficiary
+} from "./beneficiary.js";
+import {
+  getAlgorithmRecommendation,
+  schedulerMode
+} from "./algoScheduler.js";
 import { MiningSession, validateStartRequest, type MiningMode } from "./session.js";
 
 assertRuntimeConfig();
@@ -18,6 +30,8 @@ const MAX_GLOBAL_CONNECTIONS = envInt("MAX_GLOBAL_CONNECTIONS", 500, 1, 100_000)
 const MAX_CONNECTION_ATTEMPTS_PER_MINUTE = envInt("MAX_CONNECTION_ATTEMPTS_PER_MINUTE", 20, 1, 10_000);
 
 const activeConnectionsByIp = new Map<string, number>();
+const beneficiaryCreatesByIp =
+  new Map<string, SlidingWindowRateLimiter>();
 const connectionAttemptsByIp = new Map<string, SlidingWindowRateLimiter>();
 let activeConnections = 0;
 
@@ -93,6 +107,7 @@ wss.on("connection", (ws, req) => {
   const startMessages = new SlidingWindowRateLimiter(4, 60_000);
   const submitMessages = new SlidingWindowRateLimiter(300, 60_000);
   const statsMessages = new SlidingWindowRateLimiter(6, 60_000);
+  const benchmarkMessages = new SlidingWindowRateLimiter(2, 60_000);
   let activeWallet: string | null = null;
   let closed = false;
 
@@ -147,6 +162,87 @@ wss.on("connection", (ws, req) => {
       return;
     }
 
+    if (message.type === "beneficiary_create") {
+      let limiter = beneficiaryCreatesByIp.get(ip);
+
+      if (!limiter) {
+        limiter = new SlidingWindowRateLimiter(
+          5,
+          60 * 60 * 1000
+        );
+        beneficiaryCreatesByIp.set(ip, limiter);
+      }
+
+      if (!limiter.allow()) {
+        send({
+          type: "error",
+          message: "Referral creation limit reached. Try again later."
+        });
+        return;
+      }
+
+      const payoutCurrency =
+        String(message.payoutCurrency ?? "")
+          .trim()
+          .toUpperCase();
+
+      const payoutAddress =
+        String(message.payoutAddress ?? "")
+          .trim();
+
+      if (!isSupportedCurrency(payoutCurrency)) {
+        send({
+          type: "error",
+          message: "Unsupported referral payout currency."
+        });
+        return;
+      }
+
+      if (
+        !payoutAddress ||
+        payoutAddress.length > 128 ||
+        /[\x00-\x1F\x7F]/.test(payoutAddress)
+      ) {
+        send({
+          type: "error",
+          message: "Invalid referral payout address."
+        });
+        return;
+      }
+
+      try {
+        const created = createBeneficiary(
+          payoutCurrency,
+          payoutAddress
+        );
+
+        console.log("BENEFICIARY CREATED", {
+          ip,
+          id: created.beneficiary.id,
+          currency: created.beneficiary.payoutCurrency
+        });
+
+        send({
+          type: "beneficiary_created",
+          beneficiaryId: created.beneficiary.id,
+          payoutCurrency: created.beneficiary.payoutCurrency,
+          payoutAddress: created.beneficiary.payoutAddress,
+
+          // Returned once. Persistent storage contains only the hash.
+          managementSecret: created.managementSecret
+        });
+      } catch (error) {
+        console.error("BENEFICIARY CREATE ERROR", error);
+
+        send({
+          type: "error",
+          message: "Could not create referral."
+        });
+      }
+
+      return;
+    }
+
     if (message.type === "start") {
       if (!startMessages.allow()) {
         send({ type: "error", message: "Too many start requests." });
@@ -187,7 +283,9 @@ wss.on("connection", (ws, req) => {
           payoutCurrency: check.value.payoutCurrency,
           payoutAddress: check.value.payoutAddress,
           workerCount: check.value.workerCount,
-          beneficiaryId: beneficiary?.id ?? null
+          beneficiaryId: beneficiary?.id ?? null,
+          schedulerMode,
+          currentAlgorithm: "yespower"
         });
       } catch (error: any) {
         send({ type: "error", message: error?.message ?? String(error) });
@@ -198,6 +296,56 @@ wss.on("connection", (ws, req) => {
     if (message.type === "stop") {
       activeWallet = null;
       session.close();
+      return;
+    }
+
+
+    if (message.type === "benchmark") {
+      if (!benchmarkMessages.allow()) {
+        send({
+          type: "error",
+          message: "Algorithm benchmark rate limit exceeded."
+        });
+        return;
+      }
+
+      if (!activeWallet) {
+        send({
+          type: "error",
+          message: "Start mining before submitting an algorithm benchmark."
+        });
+        return;
+      }
+
+      void getAlgorithmRecommendation(message.results)
+        .then((recommendation) => {
+          console.log("ALGO SHADOW", {
+            ip,
+            selected: recommendation.selected?.id ?? null,
+            fleetEstimate: recommendation.fleetEstimate,
+            topScore: recommendation.selected?.score ?? null
+          });
+
+          send({
+            type: "algorithm_recommendation",
+            ...recommendation
+          });
+        })
+        .catch((error) => {
+          console.warn(
+            `[${ip}] algorithm scheduler unavailable`,
+            error instanceof Error ? error.message : String(error)
+          );
+
+          send({
+            type: "algorithm_recommendation",
+            mode: schedulerMode,
+            selected: null,
+            ranked: [],
+            error: "Profitability data temporarily unavailable."
+          });
+        });
+
       return;
     }
 
